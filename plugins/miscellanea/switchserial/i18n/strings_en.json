@@ -1,0 +1,13 @@
+{
+  "SERIAL_SWITCH_TITLE":"Serial Switch Configuration",
+  "SAVE":"Save",
+  "OUTPUT": "Output",
+  "PORTNAME": "Serial port name",
+  "PORTNAME_DOC": "Serial device to use",
+  "STARTMSG": "Start message",
+  "STARTMSG_DOC": "Message to send over serial once playback starts",
+  "STOPMSG": "Stop message",
+  "STOPMSG_DOC": "Message to send over serial once playback finsihes (but after delay)",
+  "DELAY": "Delay (s)",
+  "DELAY_DOC": "Amount of seconds to delay the stop message after playback finishes"
+}

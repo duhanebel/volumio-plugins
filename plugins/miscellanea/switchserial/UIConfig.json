@@ -1,0 +1,58 @@
+{
+  "page": {
+    "label": "TRANSLATE.SERIAL_SWITCH_TITLE"
+  },
+  "sections": [
+    {
+      "id": "port",
+      "element": "section",
+      "label": "TRANSLATE.OUTPUT",
+      "icon": "fa-plug",
+      "onSave": {"type":"controller", "endpoint":"miscellanea/serialswitch", "method":"saveOptions"},
+      "saveButton": {
+        "label": "TRANSLATE.SAVE",
+        "data": [
+          "port_name",
+          "start_message",
+          "stop_message",
+          "delay_setting"
+        ]
+      },
+      "content": [
+        {
+          "id": "port_name",
+          "element": "input",
+          "type": "text",
+          "label": "TRANSLATE.PORTNAME",
+          "doc": "TRANSLATE.PORTNAME_DOC",
+          "value": "/dev/ttyUSB0"
+        },
+        {
+          "id": "start_message",
+          "element": "input",
+          "type": "text",
+          "label": "TRANSLATE.STARTMSG",
+          "doc": "TRANSLATE.STARTMSG_DOC",
+          "value": "Dstart"
+        },
+        {
+          "id": "stop_message",
+          "element": "input",
+          "type": "text",
+          "label": "TRANSLATE.STOPMSG",
+          "doc": "TRANSLATE.STOPMSG_DOC",
+          "value": "Dstop"
+        },
+        {
+          "id": "delay_setting",
+          "element": "input",
+          "type": "number",
+          "label": "TRANSLATE.DELAY",
+          "doc": "TRANSLATE.DELAY_DOC",
+          "value": 1000
+        }
+
+      ]
+    }
+  ]
+}
