@@ -16,8 +16,8 @@
 	"dependencies": {
 		"fs-extra": "^0.28.0",
 		"kew": "^0.7.0",
-		"v-conf": "^1.4.0",
-    "socket.io-client": "^1.4.5",
-    "serialport" : "^6.2.0"
+		"serialport": "^6.2.0",
+		"socket.io-client": "^1.4.5",
+		"v-conf": "^1.4.2"
 	}
 }
