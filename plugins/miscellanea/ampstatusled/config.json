@@ -1,26 +1,26 @@
 {
-    "port":{
-        "type": "number" ,
-        "value": 24
+    "loading_color":{
+        "type": "string" ,
+        "value": "Red"
     },
-    "inverted":{
-        "type": "boolean",
-        "value": false
+    "ready_color":{
+        "type": "string",
+        "value": "Blue"
     },
-    "delay":{
+    "playing_color":{
+        "type": "string",
+        "value": "Green"
+    },
+    "red_gpio":{
         "type": "number",
-        "value": 720
+        "value": 22
     },
-    "latched":{
-        "type": "boolean",
-        "value": false
-    },
-    "on_pulse_width":{
+    "green_gpio":{
         "type": "number",
-        "value": 500
+        "value": 27
     },
-    "off_pulse_width":{
+    "blue_gpio":{
         "type": "number",
-        "value": 500
+        "value": 17
     }
 }

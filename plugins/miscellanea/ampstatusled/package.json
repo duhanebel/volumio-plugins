@@ -1,7 +1,7 @@
 {
-	"name": "ampswitch",
-	"version": "0.1.0",
-	"description": "Status based power management of external amplifier",
+	"name": "ampstatusled",
+	"version": "1.0.0",
+	"description": "Drive a LED based on the state of volumio",
 	"main": "index.js",
 	"scripts": {
 		"test": "echo \"Error: no test specified\" && exit 1"
@@ -9,7 +9,7 @@
 	"author": "Tim Lange",
 	"license": "ISC",
 	"volumio_info": {
-		"prettyName": "Amplifier Switch",
+		"prettyName": "Amp Status LED",
 		"icon": "fa-power-off",
 		"plugin_type": "miscellanea",
 		"boot_priority": 1

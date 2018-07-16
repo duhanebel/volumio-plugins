@@ -11,11 +11,11 @@ var socket = io.connect('http://localhost:3000');
 //declare global status variable
 var status = 'na';
 
-// Define the AmpSwitchController class
-module.exports = AmpSwitchController;
+// Define the AmpStatusLedController class
+module.exports = AmpStatusLedController;
 
 
-function AmpSwitchController(context) {
+function AmpStatusLedController(context) {
 	var self = this;
 
 	// Save a reference to the parent commandRouter
@@ -26,7 +26,7 @@ function AmpSwitchController(context) {
 
 	// Setup Debugger
   self.logger.ASdebug = function(data) {
-    self.logger.info('[ASDebug] ' + data);
+    self.logger.info('[AmpStatusLED] ' + data);
   };
 
   //define shutdown variable
@@ -35,7 +35,7 @@ function AmpSwitchController(context) {
 }
 
 // define behaviour on system start up. In our case just read config file
-AmpSwitchController.prototype.onVolumioStart = function()
+AmpStatusLedController.prototype.onVolumioStart = function()
 {
     var self = this;
     var configFile = this.commandRouter.pluginManager.getConfigurationFile(this.context,'config.json');
@@ -46,18 +46,20 @@ AmpSwitchController.prototype.onVolumioStart = function()
 }
 
 // Volumio needs this
-AmpSwitchController.prototype.getConfigurationFiles = function()
+AmpStatusLedController.prototype.getConfigurationFiles = function()
 {
 	return ['config.json'];
 }
 
 // define behaviour on plugin activation
-AmpSwitchController.prototype.onStart = function() {
+AmpStatusLedController.prototype.onStart = function() {
 	var self = this;
 	var defer = libQ.defer();
 
     // initialize output port
     self.ampGPIOInit();
+
+    self.setReady();
 
     // read and parse status once
     socket.emit('getState','');
@@ -73,13 +75,10 @@ AmpSwitchController.prototype.onStart = function() {
 };
 
 // define behaviour on plugin deactivation.
-AmpSwitchController.prototype.onStop = function() {
+AmpStatusLedController.prototype.onStop = function() {
     var self = this;
     var defer = libQ.defer();
 
-		self.logger.ASdebug('Port: ' + self.config.get('port'));
-		self.logger.ASdebug('Inverted: ' + self.config.get('inverted'));
-		self.logger.ASdebug('Delay: ' + self.config.get('delay'));
     // we don't have to claim GPIOs any more
     self.freeGPIO();
 
@@ -87,15 +86,9 @@ AmpSwitchController.prototype.onStop = function() {
 };
 
 // initialize Plugin settings page
-AmpSwitchController.prototype.getUIConfig = function() {
+AmpStatusLedController.prototype.getUIConfig = function() {
     var defer = libQ.defer();
     var self = this;
-		self.logger.ASdebug('Setting UI defaults')
-		self.logger.ASdebug('Port: ' + self.config.get('port'));
-    self.logger.ASdebug('Inverted: ' + self.config.get('inverted'))
-		self.logger.ASdebug('Latched: ' + self.config.get('latched'))
-		self.logger.ASdebug('On pulse width: ' + self.config.get('on_pulse_width'))
-		self.logger.ASdebug('Off pulse width: ' + self.config.get('off_pulse_width'))
 
     var lang_code = this.commandRouter.sharedVars.get('language_code');
 
@@ -104,13 +97,18 @@ AmpSwitchController.prototype.getUIConfig = function() {
                                 __dirname + '/UIConfig.json')
     .then(function(uiconf)
           {
-          uiconf.sections[0].content[0].value.value = self.config.get('port');
-          uiconf.sections[0].content[0].value.label = self.config.get('port').toString();
-          uiconf.sections[0].content[1].value = self.config.get('inverted');
-					uiconf.sections[0].content[2].value = self.config.get('delay');
-					uiconf.sections[0].content[3].value = self.config.get('latched');
-					uiconf.sections[0].content[4].value = self.config.get('on_pulse_width')
-					uiconf.sections[0].content[5].value = self.config.get('off_pulse_width')
+          uiconf.sections[0].content[0].value.value = self.config.get('loading_color');
+          uiconf.sections[0].content[0].value.label = self.config.get('loading_color');
+          uiconf.sections[0].content[1].value.value = self.config.get('ready_color');
+          uiconf.sections[0].content[1].value.label = self.config.get('ready_color');
+          uiconf.sections[0].content[2].value.value = self.config.get('playing_color');
+          uiconf.sections[0].content[2].value.label = self.config.get('playing_color');
+          uiconf.sections[0].content[3].value.value = self.config.get('red_gpio');
+          uiconf.sections[0].content[3].value.label = self.config.get('red_gpio').toString();
+          uiconf.sections[0].content[4].value.value = self.config.get('green_gpio');
+          uiconf.sections[0].content[4].value.label = self.config.get('green_gpio').toString();
+          uiconf.sections[0].content[5].value.value = self.config.get('blue_gpio');
+          uiconf.sections[0].content[5].value.label = self.config.get('blue_gpio').toString();
           defer.resolve(uiconf);
           })
     .fail(function()
@@ -122,110 +120,125 @@ AmpSwitchController.prototype.getUIConfig = function() {
 };
 
 // define what happens when the user clicks the 'save' button on the settings page
-AmpSwitchController.prototype.saveOptions = function(data) {
+AmpStatusLedController.prototype.saveOptions = function(data) {
     var self = this;
     var successful = true;
-    var old_port = self.config.get('port');
-
+    var old_red_gpio = self.config.get('red_gpio');
+    var old_green_gpio = self.config.get('green_gpio');
+    var old_blue_gpio = self.config.get('blue_gpio');
     // save port setting to our config
-		self.logger.ASdebug('Saving Settings: Port: ' + data['port_setting']['value']);
-	  self.logger.ASdebug('Saving Settings: Inverted: ' + data['inverted_setting']);
-	  self.logger.ASdebug('Saving Settings: Delay: ' + data['delay_setting']);
-	  self.logger.ASdebug('Saving Settings: Latched: ' + data['latched_setting']);
-		self.logger.ASdebug('Saving Settings: On Pulse width: ' + data['on_pulse_width_setting'])
-		self.logger.ASdebug('Saving Settings: Off Pulse width: ' + data['off_pulse_width_setting'])
+		self.logger.ASdebug('Saving Settings');
 
-    self.config.set('port', data['port_setting']['value']);
-    self.config.set('inverted', data['inverted_setting']);
-		self.config.set('delay', data['delay_setting']);
-		self.config.set('latched', data['latched_setting']);
-		self.config.set('on_pulse_width', data['on_pulse_width_setting'])
-		self.config.set('off_pulse_width', data['off_pulse_width_setting'])
+    self.config.set('loading_color', data['loading_color']['value']);
+    self.config.set('ready_color', data['ready_color']['value']);
+    self.config.set('playing_color', data['playing_color']['value']);
+    self.config.set('red_gpio', data['red_gpio']['value']);
+    self.config.set('green_gpio', data['green_gpio']['value']);
+    self.config.set('blue_gpio', data['blue_gpio']['value']);
 
     // unexport GPIOs before constructing new GPIO object
     self.freeGPIO();
-    try{
+    try {
         self.ampGPIOInit()
     } catch(err) {
         successful = false;
     }
     if(successful){
         // output message about successful saving to the UI
-        self.commandRouter.pushToastMessage('success', 'Amplifier Switch Settings', 'Saved');
+        self.commandRouter.pushToastMessage('success', 'Amp Status LED Settings', 'Saved');
     } else {
         // save port setting to old config
-        self.config.set('port', old_port);
+        self.config.set('red_gpio', old_red_gpio);
+        self.config.set('green_gpio', old_green_gpio);
+        self.config.set('blue_gpio', old_blue_gpio);
         self.commandRouter.pushToastMessage('error','Port not accessible', '');
     }
 
 };
 
 // initialize shutdown port to the one that we stored in the config
-AmpSwitchController.prototype.ampGPIOInit = function() {
+AmpStatusLedController.prototype.ampGPIOInit = function() {
     var self = this;
 
-    self.shutdown = new Gpio(self.config.get('port'),'out');
+    self.redPin = new Gpio(self.config.get('red_gpio'),'out');
+    self.greenPin = new Gpio(self.config.get('green_gpio'),'out');
+    self.bluePin = new Gpio(self.config.get('blue_gpio'),'out');
 };
 
 // a pushState event has happened. Check whether it differs from the last known status and
 // switch output port on or off respectively
-AmpSwitchController.prototype.parseStatus = function(state) {
+AmpStatusLedController.prototype.parseStatus = function(state) {
     var self = this;
-		var delay = self.config.get('delay');
 		self.logger.ASdebug('CurState: ' + state.status + ' PrevState: ' + status);
 
-		clearTimeout(self.OffTimerID);
     if(state.status=='play' && state.status!=status){
         status=state.status;
-				self.config.get('latched')? self.pulse(self.config.get('on_pulse_width')) : self.on();
+				self.setPlaying();
     } else if((state.status=='pause' || state.status=='stop') && (status!='pause' && status!='stop')){
-				self.logger.ASdebug('InitTimeout - Amp off in: ' + delay + ' ms');
-				self.OffTimerID = setTimeout(function() {
-					status=state.status;
-					self.config.get('latched')? self.pulse(self.config.get('off_pulse_width')) : self.off();
-				}, delay);
+       status=state.status
+       self.setReady();
     }
 
 };
 
 // switch outport port on
-AmpSwitchController.prototype.on = function() {
+AmpStatusLedController.prototype.setPlaying = function() {
     var self = this;
 
-		self.logger.ASdebug('Togle GPIO: ON');
-    if(!self.config.get('inverted')){
-        self.shutdown.writeSync(1);
-    } else {
-        self.shutdown.writeSync(0);
-    }
+		self.logger.ASdebug('Togle GPIO LED: Playing');
+    self.setLEDColor(self.config.get('playing_color'));
 };
 
 //switch output port off
-AmpSwitchController.prototype.off = function() {
+AmpStatusLedController.prototype.setReady = function() {
     var self = this;
 
-		self.logger.ASdebug('Togle GPIO: OFF');
-    if(!self.config.get('inverted')){
-        self.shutdown.writeSync(0);
-    } else {
-        self.shutdown.writeSync(1);
-    }
+  	self.logger.ASdebug('Togle GPIO LED: Ready');
+    self.setLEDColor(self.config.get('ready_color'));
 };
 
-// Pulse output port
-AmpSwitchController.prototype.pulse = function (pulse_width) {
-		var self = this;
-		self.logger.ASdebug('Pulsing GPIO for ' + pulse_width + 'ms');
-		self.on();
-		clearTimeout(self.pulseTimerID);
-		self.pulseTimerID = setTimeout(function() {
- 			 self.off();
-		}, pulse_width);
+AmpStatusLedController.prototype.setLEDColor = function(colorID) {
+   switch(colorID) {
+    case 'Red':
+        this.redPin.writeSync(1);
+        this.greenPin.writeSync(0);
+        this.bluePin.writeSync(0);
+        break;
+    case 'Green':
+        this.redPin.writeSync(0);
+        this.greenPin.writeSync(1);
+        this.bluePin.writeSync(0);
+        break;
+    case 'Blue':
+        this.redPin.writeSync(0);
+        this.greenPin.writeSync(0);
+        this.bluePin.writeSync(1);
+    break;
+    case 'Yellow':
+        this.redPin.writeSync(1);
+        this.greenPin.writeSync(1);
+        this.bluePin.writeSync(0);
+    break;
+    case 'LightBlue':
+        this.redPin.writeSync(0);
+        this.greenPin.writeSync(1);
+        this.bluePin.writeSync(1);
+    break;
+    case 'Purple':
+        this.redPin.writeSync(1);
+        this.greenPin.writeSync(0);
+        this.bluePin.writeSync(1);
+    break;
+    default:
+        this.logger.ASdebug('Invalid color specified');
+    }
 }
 
 // stop claiming output port
-AmpSwitchController.prototype.freeGPIO = function() {
+AmpStatusLedController.prototype.freeGPIO = function() {
     var self = this;
 
-    self.shutdown.unexport();
+    self.redPin.unexport();
+    self.greenPin.unexport();
+    self.bluePin.unexport();
 };
