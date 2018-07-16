@@ -1,0 +1,60 @@
+{
+	"page": {
+		"label": "TRANSLATE.SERIAL_SWITCH_TITLE"
+	},
+		"sections": [
+		{
+			"id": "port",
+			"element": "section",
+			"label": "TRANSLATE.OUTPUT",
+			"icon": "fa-plug",
+			"onSave": {"type":"controller", "endpoint":"miscellanea/ampswitch_serial", "method":"saveOptions"},
+			"saveButton": {
+				"label": "TRANSLATE.SAVE",
+				"data": [
+					"port_name",
+					"start_message",
+					"stop_message",
+					"delay"
+				]
+			},
+			"content": [
+			{
+				"id": "port_name",
+				"element": "input",
+				"type": "text",
+				"label": "TRANSLATE.PORTNAME",
+				"doc": "TRANSLATE.PORTNAME_DOC",
+				"value": "tete"
+			},
+			{
+		               "id": "start_message",
+				"element": "input",
+				"type": "text",
+				"label": "TRANSLATE.STARTMSG",
+				"doc": "TRANSLATE.STARTMSG_DOC",
+				"value": 1000
+			},
+			{
+		               "id": "stop_message",
+				"element": "input",
+				"type": "text",
+				"label": "TRANSLATE.STOPMSG",
+				"doc": "TRANSLATE.STOPMSG_DOC",
+				"value": 1000
+			},
+			{
+		               "id": "delay",
+				"element": "input",
+				"type": "number",
+				"label": "TRANSLATE.DELAY",
+				"doc": "TRANSLATE.DELAY_DOC",
+				"value": 1000
+			}
+
+
+
+			]
+		}
+	]
+}

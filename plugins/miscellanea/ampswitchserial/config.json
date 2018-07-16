@@ -1,0 +1,18 @@
+{
+    "port_name":{
+        "type": "text" ,
+        "value": "/dev/ttyUSB0"
+    },
+    "start_message":{
+        "type": "text",
+        "value": "DStart"
+    },
+    "stop_message":{
+        "type": "text",
+        "value": "DStop"
+    },
+    "delay":{
+        "type": "number",
+        "value": 5
+    }
+}
