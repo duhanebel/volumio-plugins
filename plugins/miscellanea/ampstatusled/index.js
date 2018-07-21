@@ -1,4 +1,4 @@
-'use strict';
+G'use strict';
 
 // load external modules
 var libQ = require('kew');
@@ -16,15 +16,15 @@ module.exports = AmpStatusLedController;
 
 
 function AmpStatusLedController(context) {
-	var self = this;
+  var self = this;
 
-	// Save a reference to the parent commandRouter
-	self.context = context;
-	self.commandRouter = self.context.coreCommand;
-	self.logger = self.commandRouter.logger;
-	this.configManager = this.context.configManager;
+  // Save a reference to the parent commandRouter
+  self.context = context;
+  self.commandRouter = self.context.coreCommand;
+  self.logger = self.commandRouter.logger;
+  this.configManager = this.context.configManager;
 
-	// Setup Debugger
+  // Setup Debugger
   self.logger.ASdebug = function(data) {
     self.logger.info('[AmpStatusLED] ' + data);
   };
@@ -48,13 +48,13 @@ AmpStatusLedController.prototype.onVolumioStart = function()
 // Volumio needs this
 AmpStatusLedController.prototype.getConfigurationFiles = function()
 {
-	return ['config.json'];
+  return ['config.json'];
 }
 
 // define behaviour on plugin activation
 AmpStatusLedController.prototype.onStart = function() {
-	var self = this;
-	var defer = libQ.defer();
+  var self = this;
+  var defer = libQ.defer();
 
     // initialize output port
     self.ampGPIOInit();
@@ -71,7 +71,7 @@ AmpStatusLedController.prototype.onStart = function() {
     socket.on('pushState', self.parseStatus.bind(self));
 
     defer.resolve();
-	return defer.promise;
+  return defer.promise;
 };
 
 // define behaviour on plugin deactivation.
@@ -127,7 +127,7 @@ AmpStatusLedController.prototype.saveOptions = function(data) {
     var old_green_gpio = self.config.get('green_gpio');
     var old_blue_gpio = self.config.get('blue_gpio');
     // save port setting to our config
-		self.logger.ASdebug('Saving Settings');
+    self.logger.ASdebug('Saving Settings');
 
     self.config.set('loading_color', data['loading_color']['value']);
     self.config.set('ready_color', data['ready_color']['value']);
@@ -146,6 +146,8 @@ AmpStatusLedController.prototype.saveOptions = function(data) {
     if(successful){
         // output message about successful saving to the UI
         self.commandRouter.pushToastMessage('success', 'Amp Status LED Settings', 'Saved');
+        newBootPinValue = self.pinConfForColor(data['loading_color']['value'])
+        self.updateBootConfig(newBootPinValue)
     } else {
         // save port setting to old config
         self.config.set('red_gpio', old_red_gpio);
@@ -169,11 +171,11 @@ AmpStatusLedController.prototype.ampGPIOInit = function() {
 // switch output port on or off respectively
 AmpStatusLedController.prototype.parseStatus = function(state) {
     var self = this;
-		self.logger.ASdebug('CurState: ' + state.status + ' PrevState: ' + status);
+    self.logger.ASdebug('CurState: ' + state.status + ' PrevState: ' + status);
 
     if(state.status=='play' && state.status!=status){
         status=state.status;
-				self.setPlaying();
+        self.setPlaying();
     } else if((state.status=='pause' || state.status=='stop') && (status!='pause' && status!='stop')){
        status=state.status
        self.setReady();
@@ -185,7 +187,7 @@ AmpStatusLedController.prototype.parseStatus = function(state) {
 AmpStatusLedController.prototype.setPlaying = function() {
     var self = this;
 
-		self.logger.ASdebug('Togle GPIO LED: Playing');
+    self.logger.ASdebug('Togle GPIO LED: Playing');
     self.setLEDColor(self.config.get('playing_color'));
 };
 
@@ -193,7 +195,7 @@ AmpStatusLedController.prototype.setPlaying = function() {
 AmpStatusLedController.prototype.setReady = function() {
     var self = this;
 
-  	self.logger.ASdebug('Togle GPIO LED: Ready');
+    self.logger.ASdebug('Togle GPIO LED: Ready');
     self.setLEDColor(self.config.get('ready_color'));
 };
 
@@ -242,3 +244,42 @@ AmpStatusLedController.prototype.freeGPIO = function() {
     self.greenPin.unexport();
     self.bluePin.unexport();
 };
+
+AmpStatusLedController.prototype.pinConfForColor = function(color) {
+  switch(color) {
+      case 'Red':
+          return "gpio=" + self.config.get('red_gpio') + "=op,dh"
+      break;
+      case 'Green':
+          return "gpio=" + self.config.get('green_gpio') + "=op,dh"
+      break;
+      case 'Blue':
+          return "gpio=" + self.config.get('blue_gpio') + "=op,dh"
+      break;
+      case 'Yellow':
+          return "gpio=" + self.config.get('red_gpio') + "," + self.config.get('green_gpio') + "=op,dh"
+      break;
+      case 'LightBlue':
+          return "gpio=" + self.config.get('blue_gpio') + "," + self.config.get('green_gpio') + "=op,dh"
+      break;
+      case 'Purple':
+          return "gpio=" + self.config.get('blue_gpio') + "," + self.config.get('red_gpio') + "=op,dh"
+      break;
+  }
+}
+
+AmpStatusLedController.prototype.updateBootConfig = function(newValue) {
+  var fs = require('fs')
+  var boot_config = '/boot/config.txt'
+  fs.readFile(boot_config, 'utf8', function (err,data) {
+    if (err) {
+      return console.log(err);
+    }
+    var result = data.replace(/^gpio=([0-9]{1,2},*)+=op,dh/, 'newValue');
+
+    fs.writeFile(boot_config, result, 'utf8', function (err) {
+       if (err) return console.log(err);
+    });
+  });
+}
+
