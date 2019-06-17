@@ -8,7 +8,7 @@ var SerialPort = require('serialport');
 var socket = io.connect('http://localhost:3000');
 
 //declare global status variable
-var status = 'na';
+var status_amp = 'na';
 
 // Define the SerialSwitchController class
 module.exports = SerialSwitchController;
@@ -171,16 +171,17 @@ SerialSwitchController.prototype.parseStatus = function(state) {
 
 	var self = this;
 	var delay = (this.config.get('delay') * 1000);
-	this.logger.SWdebug('CurState: ' + state.status + ' PrevState: ' + status);
+	this.logger.SWdebug('CurState: ' + state.status + ' PrevState: ' + status_amp);
 
-	clearTimeout(this.OffTimerID);
-	if(state.status=='play' && state.status!=status){
-		status=state.status;
+	if(state.status=='play' && state.status!=status_amp){
+		clearTimeout(this.OffTimerID);
+		status_amp=state.status;
 		this.on();
-	} else if((state.status=='pause' || state.status=='stop') && (status!='pause' && status!='stop')){
+	} else if((state.status=='pause' || state.status=='stop') && (status_amp!='pause' && status_amp!='stop')){
+		clearTimeout(this.OffTimerID);
 		this.logger.SWdebug('InitTimeout - Serial message-off in: ' + delay + ' ms');
+		status_amp=state.status;
 		this.OffTimerID = setTimeout(function() {
-				status=state.status;
 				self.off();
 				}, delay);
 	}
@@ -190,13 +191,16 @@ SerialSwitchController.prototype.parseStatus = function(state) {
 // switch outport port on
 SerialSwitchController.prototype.on = function() {
 	this.logger.SWdebug('Sending ON message to serial');
-	this.serial.write(this.config.get('start_message'));
+//	this.serial.write(this.config.get('start_message')+'\r');
+	this.serial.write("W 1 1 2\r");
+	setTimeout(function() { this.serial.write("W 1 2 7\r"); }, 1000);
 };
 
 //switch output port off
 SerialSwitchController.prototype.off = function() {
 	this.logger.SWdebug('Sending OFF message to serial');
-	this.serial.write(this.config.get('stop_message'));
+	//this.serial.write(this.config.get('stop_message')+'\r');
+	this.serial.write("W 1 1 1\r");
 };
 
 // stop claiming output port
