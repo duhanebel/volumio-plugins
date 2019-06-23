@@ -190,17 +190,18 @@ SerialSwitchController.prototype.parseStatus = function(state) {
 
 // switch outport port on
 SerialSwitchController.prototype.on = function() {
+        var self = this;
 	this.logger.SWdebug('Sending ON message to serial');
-//	this.serial.write(this.config.get('start_message')+'\r');
-	this.serial.write("W 1 1 2\r");
-	setTimeout(function() { this.serial.write("W 1 2 7\r"); }, 1000);
+	this.serial.write(this.config.get('start_message'));
+//	this.serial.write("W 1 1 2\r");
+//	setTimeout(function() { self.serial.write("W 1 2 7\r"); }, 1000);
 };
 
 //switch output port off
 SerialSwitchController.prototype.off = function() {
 	this.logger.SWdebug('Sending OFF message to serial');
-	//this.serial.write(this.config.get('stop_message')+'\r');
-	this.serial.write("W 1 1 1\r");
+	this.serial.write(this.config.get('stop_message'));
+//	this.serial.write("W 1 1 1\r");
 };
 
 // stop claiming output port
