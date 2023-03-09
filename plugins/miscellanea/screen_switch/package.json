@@ -1,0 +1,22 @@
+{
+	"name": "screen_switch",
+	"version": "1.0.0",
+	"description": "Plugin to turn on/off the screen when playing/pause",
+	"main": "index.js",
+	"scripts": {
+		"test": "echo \"Error: no test specified\" && exit 1"
+	},
+	"author": "Fabio Gallonetto",
+	"license": "ISC",
+	"volumio_info": {
+		"prettyName": "Screen on/off switch",
+		"icon": "fa-power-off",
+		"plugin_type": "miscellanea"
+	},
+	"dependencies": {
+		"fs-extra": "^8.1.0",
+		"kew": "^0.7.0",
+		"socket.io-client": "^1.4.5",
+		"v-conf": "^1.4.2"
+	}
+}

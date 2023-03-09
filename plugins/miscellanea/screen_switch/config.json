@@ -1,0 +1,10 @@
+{
+    "display_number":{
+        "type": "string",
+        "value": ":0"
+    },
+    "delay":{
+        "type": "number",
+        "value": 300 
+    }
+}

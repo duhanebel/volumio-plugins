@@ -1,0 +1,9 @@
+{
+  "SCREEN_SWITCH_TITLE":"Screen Switch Configuration",
+  "SAVE":"Save",
+  "OUTPUT": "Output",
+  "DISPLAY": "Display number",
+  "DISPLAY_DOC": "The display name/number on which Xorg is running (usually on a single screen setup it is ':0')",
+  "DELAY": "Delay (s)",
+  "DELAY_DOC": "Amount of seconds to delay turning off the screen after playback finishes"
+}

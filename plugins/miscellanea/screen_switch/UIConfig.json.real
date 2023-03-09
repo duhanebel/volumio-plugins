@@ -1,0 +1,40 @@
+{
+  "page": {
+    "label": "TRANSLATE.SCREEN_SWITCH_TITLE"
+  },
+  "sections": [
+    {
+      "id": "port",
+      "element": "section",
+      "label": "TRANSLATE.OUTPUT",
+      "icon": "fa-plug",
+      "onSave": {"type":"controller", "endpoint":"miscellanea/screen_switch", "method":"saveOptions"},
+      "saveButton": {
+        "label": "TRANSLATE.SAVE",
+        "data": [
+          "display_number",
+          "delay_setting"
+        ]
+      },
+      "content": [
+        {
+          "id": "display_number",
+          "element": "input",
+          "type": "text",
+          "label": "TRANSLATE.DISPLAY",
+          "doc": "TRANSLATE.DISPLAY_DOC",
+          "value": ":0"
+        },
+        {
+          "id": "delay_setting",
+          "element": "input",
+          "type": "number",
+          "label": "TRANSLATE.DELAY",
+          "doc": "TRANSLATE.DELAY_DOC",
+          "value": 1000
+        }
+
+      ]
+    }
+  ]
+}
