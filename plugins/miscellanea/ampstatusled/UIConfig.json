@@ -32,6 +32,10 @@
                              },
                              "options": [
                                          {
+                                         "value": "Off" ,
+                                         "label": "Off"
+                                         },
+                                         {
                                          "value": "Red" ,
                                          "label": "Red"
                                          },
@@ -42,6 +46,22 @@
                                          {
                                          "value": "Blue",
                                          "label": "Blue"
+                                         },
+                                         {
+                                         "value": "Yellow",
+                                         "label": "Yellow"
+                                         },
+                                         {
+                                         "value": "Cyan",
+                                         "label": "Cyan"
+                                         },
+                                         {
+                                         "value": "Magenta",
+                                         "label": "Magenta"
+                                         },
+                                         {
+                                         "value": "White",
+                                         "label": "White"
                                          }
                                          ]
                              },
@@ -56,6 +76,10 @@
                              },
                              "options": [
                                          {
+                                         "value": "Off" ,
+                                         "label": "Off"
+                                         },
+                                         {
                                          "value": "Red" ,
                                          "label": "Red"
                                          },
@@ -72,12 +96,16 @@
                                          "label": "Yellow"
                                          },
                                          {
-                                         "value": "LightBlue",
-                                         "label": "LightBlue"
+                                         "value": "Cyan",
+                                         "label": "Cyan"
                                          },
                                          {
-                                         "value": "Purple",
-                                         "label": "Purple"
+                                         "value": "Magenta",
+                                         "label": "Magenta"
+                                         },
+                                         {
+                                         "value": "White",
+                                         "label": "White"
                                          }
                                          ]
                              },
@@ -92,6 +120,10 @@
                              },
                              "options": [
                                          {
+                                         "value": "Off" ,
+                                         "label": "Off"
+                                         },
+                                         {
                                          "value": "Red" ,
                                          "label": "Red"
                                          },
@@ -108,12 +140,16 @@
                                          "label": "Yellow"
                                          },
                                          {
-                                         "value": "LightBlue",
-                                         "label": "LightBlue"
+                                         "value": "Cyan",
+                                         "label": "Cyan"
                                          },
                                          {
-                                         "value": "Purple",
-                                         "label": "Purple"
+                                         "value": "Magenta",
+                                         "label": "Magenta"
+                                         },
+                                         {
+                                         "value": "White",
+                                         "label": "White"
                                          }
                                          ]
                              },
