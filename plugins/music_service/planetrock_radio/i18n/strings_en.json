@@ -1,0 +1,18 @@
+{
+    "PLUGIN_NAME": "Planet Rock",
+    "WAIT_FOR_RADIO": "Please wait for Planet Rock radio...",
+    "STOP_RADIO": "Stopped Planet Rock radio",
+    "ERROR_STREAM_SERVER": "There is a problem with the Planet Rock streaming server.",
+    "ERROR_AUTH": "Authentication failed. Please check your credentials.",
+    "ERROR_AUTH_REQUIRED": "Please configure your Planet Rock account credentials.",
+    "CONFIG": {
+        "TITLE": "Planet Rock Radio",
+        "ABOUT": "About Planet Rock Radio",
+        "DESCRIPTION": "Planet Rock is a British digital radio station owned and operated by Bauer Media Audio UK as part of the Greatest Hits Radio Network. The station broadcasts classic rock music and is available nationally on DAB digital radio, online and on digital television.",
+        "AUTH": "Authentication",
+        "AUTH_DESCRIPTION": "Enter your Planet Rock account credentials to access the premium stream.",
+        "USERNAME": "Email",
+        "PASSWORD": "Password",
+        "SAVE": "Save"
+    }
+}

@@ -1,0 +1,48 @@
+{
+    "page": {
+        "label": "TRANSLATE.CONFIG.TITLE"
+    },
+    "sections": [
+        {
+            "id": "auth",
+            "element": "section",
+            "label": "TRANSLATE.CONFIG.AUTH",
+            "icon": "fa-user",
+            "description": "TRANSLATE.CONFIG.AUTH_DESCRIPTION",
+            "onSave": {
+                "type": "controller",
+                "endpoint": "music_service/planetrock_radio",
+                "method": "updateConfig"
+            },
+            "saveButton": {
+                "label": "TRANSLATE.CONFIG.SAVE",
+                "data": [
+                    "username",
+                    "password"
+                ]
+            },
+            "content": [
+                {
+                    "id": "username",
+                    "element": "input",
+                    "label": "TRANSLATE.CONFIG.USERNAME",
+                    "value": ""
+                },
+                {
+                    "id": "password",
+                    "element": "input",
+                    "label": "TRANSLATE.CONFIG.PASSWORD",
+                    "value": "",
+                    "type": "password"
+                }
+            ]
+        },
+        {
+            "id": "info",
+            "element": "section",
+            "label": "TRANSLATE.CONFIG.ABOUT",
+            "icon": "fa-info-circle",
+            "description": "TRANSLATE.CONFIG.DESCRIPTION"
+        }
+    ]
+}
