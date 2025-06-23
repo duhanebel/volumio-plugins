@@ -3,7 +3,10 @@
 var libQ = require('kew');
 var fs = require('fs-extra');
 var config = require('v-conf');
-var unirest = require('unirest');
+var http = require('http');
+var EventSource = require('eventsource');
+var axios = require('axios');
+var net = require('net');
 
 module.exports = ControllerPlanetRockRadio;
 
@@ -21,6 +24,10 @@ function ControllerPlanetRockRadio(context) {
   self.userId = null; // Will be set from JWT token
   self.aisSessionId = null;
   self.eventSource = null;
+  self.proxyServer = null;
+  self.proxyPort = null;
+  self.isFirstMetadataUpdate = true; // Add flag for first update
+  self.metadataUpdateTimer = null; // Add timer reference
 
   self.logger.info("ControllerPlanetRockRadio::constructor");
 }
@@ -50,6 +57,10 @@ ControllerPlanetRockRadio.prototype.onStop = function() {
   if (self.eventSource) {
     self.eventSource.close();
     self.eventSource = null;
+  }
+  if (self.proxyServer) {
+    self.proxyServer.close();
+    self.proxyServer = null;
   }
   return libQ.resolve();
 };
@@ -82,6 +93,7 @@ ControllerPlanetRockRadio.prototype.getUIConfig = function() {
   {
     uiconf.sections[0].content[0].value = self.config.get('username');
     uiconf.sections[0].content[1].value = self.config.get('password');
+    uiconf.sections[0].content[2].value = self.config.get('metadata_delay', 10);
     defer.resolve(uiconf);
   })
   .fail(function()
@@ -106,7 +118,7 @@ ControllerPlanetRockRadio.prototype.addToBrowseSources = function () {
     uri: 'planetrock',
     plugin_type: 'music_service',
     plugin_name: "planetrock_radio",
-    albumart: '/albumart?sourceicon=music_service/planetrock_radio/planetrock_radio.svg'
+    albumart: '/albumart?sourceicon=music_service/planetrock_radio/assets/planetrock_radio.webp'
   });
 };
 
@@ -146,6 +158,11 @@ ControllerPlanetRockRadio.prototype.updateConfig = function(data) {
 
   if (self.config.get('password') !== data['password']) {
     self.config.set('password', data['password']);
+    configUpdated = true;
+  }
+
+  if (self.config.get('metadata_delay') !== data['metadata_delay']) {
+    self.config.set('metadata_delay', data['metadata_delay']);
     configUpdated = true;
   }
 
@@ -204,24 +221,16 @@ ControllerPlanetRockRadio.prototype.authenticate = function() {
 
   // First get the CSRF token
   self.logger.info('Making CSRF token request to: https://account.planetradio.co.uk/ajax/process-account/');
-  unirest.post('https://account.planetradio.co.uk/ajax/process-account/')
-    .end(function(response) {
+  axios.post('https://account.planetradio.co.uk/ajax/process-account/')
+    .then(response => {
       self.logger.info('CSRF Response Status: ' + response.status);
       self.logger.info('CSRF Response Headers: ' + JSON.stringify(response.headers, null, 2));
-      self.logger.info('CSRF Response Body: ' + JSON.stringify(response.body, null, 2));
-
-      if (response.error) {
-        self.logger.error('Failed to get CSRF token: ' + response.error);
-        defer.reject(new Error(self.getRadioI18nString('ERROR_AUTH')));
-        return;
-      }
+      self.logger.info('CSRF Response Body: ' + JSON.stringify(response.data, null, 2));
 
       // Get CSRF token from header
       var csrfHeader = response.headers['x-csrf-token'];
       if (!csrfHeader) {
-        self.logger.error('Could not find CSRF token in headers');
-        defer.reject(new Error(self.getRadioI18nString('ERROR_AUTH')));
-        return;
+        throw new Error('Could not find CSRF token in headers');
       }
 
       try {
@@ -252,65 +261,67 @@ ControllerPlanetRockRadio.prototype.authenticate = function() {
           'Cookie': response.headers['set-cookie']
         }, null, 2));
 
-        unirest.post('https://account.planetradio.co.uk/ajax/process-account/')
-          .headers({
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'X-CSRF-Token': csrfHeader,
-            'Cookie': response.headers['set-cookie']
-          })
-          .send(formData)
-          .end(function(loginResponse) {
-            self.logger.info('Login Response Status: ' + loginResponse.status);
-            self.logger.info('Login Response Error: ' + loginResponse.error);
-            self.logger.info('Login Response Headers: ' + JSON.stringify(loginResponse.headers, null, 2));
-            self.logger.info('Login Response Body: ' + JSON.stringify(loginResponse.body, null, 2));
-
-            if (loginResponse.error) {
-              self.logger.error('Login failed: ' + loginResponse.error);
-              defer.reject(new Error(self.getRadioI18nString('ERROR_AUTH')));
-              return;
+        // Return both the login request promise and the csrfData
+        return {
+          loginPromise: axios.post('https://account.planetradio.co.uk/ajax/process-account/', formData, {
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              'X-CSRF-Token': csrfHeader,
+              'Cookie': response.headers['set-cookie']
             }
-
-            if (loginResponse.body && loginResponse.body.status === 601) {
-              self.csrfToken = csrfData.csrf_value;
-              
-              // Find the specific JWT cookie we need
-              var cookies = loginResponse.headers['set-cookie'];
-              var jwtCookie = null;
-              
-              if (Array.isArray(cookies)) {
-                jwtCookie = cookies.find(function(cookie) {
-                  return cookie.startsWith('jwt-radio-uk-sso-uk_radio=') && !cookie.includes('deleted');
-                });
-              }
-              
-              if (!jwtCookie) {
-                self.logger.error('Could not find valid JWT cookie in response');
-                defer.reject(new Error(self.getRadioI18nString('ERROR_AUTH')));
-                return;
-              }
-
-              self.sessionCookie = jwtCookie;
-
-              // Extract user ID from JWT token
-              var jwtPayload = self.extractJwtPayload([jwtCookie]);
-              if (jwtPayload && jwtPayload.id) {
-                self.userId = jwtPayload.id;
-                self.logger.info('Successfully extracted user ID: ' + self.userId);
-                defer.resolve();
-              } else {
-                self.logger.error('Failed to extract user ID from JWT token');
-                defer.reject(new Error(self.getRadioI18nString('ERROR_AUTH')));
-              }
-            } else {
-              self.logger.error('Login failed: ' + JSON.stringify(loginResponse.body));
-              defer.reject(new Error(self.getRadioI18nString('ERROR_AUTH')));
-            }
-          });
+          }),
+          csrfData: csrfData
+        };
       } catch (error) {
         self.logger.error('Failed to parse CSRF token: ' + error.message);
-        defer.reject(new Error(self.getRadioI18nString('ERROR_AUTH')));
+        throw error;
       }
+    })
+    .then(({ loginPromise, csrfData }) => {
+      return loginPromise.then(loginResponse => {
+        self.logger.info('Login Response Status: ' + loginResponse.status);
+        self.logger.info('Login Response Headers: ' + JSON.stringify(loginResponse.headers, null, 2));
+        self.logger.info('Login Response Body: ' + JSON.stringify(loginResponse.data, null, 2));
+
+        if (loginResponse.data && loginResponse.data.status === 601) {
+          self.csrfToken = csrfData.csrf_value;
+          
+          // Find the specific JWT cookie we need
+          var cookies = loginResponse.headers['set-cookie'];
+          var jwtCookie = null;
+          
+          if (Array.isArray(cookies)) {
+            jwtCookie = cookies.find(function(cookie) {
+              return cookie.startsWith('jwt-radio-uk-sso-uk_radio=') && !cookie.includes('deleted');
+            });
+          }
+          
+          if (!jwtCookie) {
+            throw new Error('Could not find valid JWT cookie in response');
+          }
+
+          self.sessionCookie = jwtCookie;
+
+          // Extract user ID from JWT token
+          var jwtPayload = self.extractJwtPayload([jwtCookie]);
+          if (jwtPayload && jwtPayload.id) {
+            self.userId = jwtPayload.id;
+            self.logger.info('Successfully extracted user ID: ' + self.userId);
+            return;
+          } else {
+            throw new Error('Failed to extract user ID from JWT token');
+          }
+        } else {
+          throw new Error('Login failed: ' + JSON.stringify(loginResponse.data));
+        }
+      });
+    })
+    .then(() => {
+      defer.resolve();
+    })
+    .catch(error => {
+      self.logger.error('Authentication failed: ' + error.message);
+      defer.reject(new Error(self.getRadioI18nString('ERROR_AUTH')));
     });
 
   return defer.promise;
@@ -350,7 +361,8 @@ ControllerPlanetRockRadio.prototype.getRootContent = function() {
               album: '',
               icon: 'fa fa-music',
               uri: streamUrl,
-              streamType: 'aac'
+              streamType: 'aac',
+              albumart: '/albumart?sourceicon=music_service/planetrock_radio/assets/planetrock_radio.webp'
             }
           ]
         }
@@ -373,11 +385,269 @@ ControllerPlanetRockRadio.prototype.explodeUri = function(uri) {
     type: 'track',
     trackType: 'webradio',
     streamType: 'aac',
-    albumart: '/albumart?sourceicon=music_service/planetrock_radio/planetrock_radio.svg'
+    albumart: '/albumart?sourceicon=music_service/planetrock_radio/assets/planetrock_radio.webp'
   };
 
   defer.resolve(response);
   return defer.promise;
+};
+
+ControllerPlanetRockRadio.prototype.startProxyServer = function() {
+  var self = this;
+  var defer = libQ.defer();
+
+  // Find an available port
+  var server = net.createServer();
+  server.listen(0, function() {
+    self.proxyPort = server.address().port;
+    server.close();
+    
+    // Create the proxy server
+    self.proxyServer = http.createServer(function(req, res) {
+      if (req.url === '/stream') {
+        // Handle stream request
+        const currentEpoch = Math.floor(Date.now() / 1000);
+        const streamUrl = 'https://stream-mz.hellorayo.co.uk/planetrock_premhigh.aac?' +
+          'direct=false' +
+          '&listenerid=' + self.userId +
+          '&aw_0_1st.bauer_listenerid=' + self.userId +
+          '&aw_0_1st.playerid=BMUK_inpage_html5' +
+          '&aw_0_1st.skey=' + currentEpoch +
+          '&aw_0_1st.bauer_loggedin=true' +
+          '&user_id=' + self.userId +
+          '&aw_0_1st.bauer_user_id=' + self.userId +
+          '&region=GB';
+
+        self.logger.info('Proxying stream request to: ' + streamUrl);
+
+        axios({
+          method: 'get',
+          url: streamUrl,
+          responseType: 'stream',
+          headers: {
+            'Accept': '*/*',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15'
+          },
+          httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+        })
+        .then(response => {
+          // Get cookies from response
+          const cookies = response.headers['set-cookie'];
+          if (cookies) {
+            for (const cookie of cookies) {
+              if (cookie.startsWith('AISSessionId=')) {
+                self.aisSessionId = cookie.split(';')[0];
+                self.logger.info('Captured AISSessionId: ' + self.aisSessionId);
+                // Start metadata connection
+                self.setupEventSource();
+                break;
+              }
+            }
+          }
+
+          // Set appropriate headers
+          res.writeHead(200, {
+            'Content-Type': 'audio/aac',
+            'Transfer-Encoding': 'chunked'
+          });
+
+          // Pipe the stream
+          response.data.pipe(res);
+
+          // Handle stream end
+          response.data.on('end', () => {
+            self.logger.info('Stream ended, restarting...');
+            res.end();
+          });
+
+          // Handle stream error
+          response.data.on('error', error => {
+            self.logger.error('Stream error: ' + error);
+            res.end();
+          });
+        })
+        .catch(error => {
+          self.logger.error('Stream request error: ' + error);
+          res.writeHead(500);
+          res.end();
+        });
+      }
+    });
+
+    self.proxyServer.listen(self.proxyPort, function() {
+      self.logger.info('Proxy server listening on port ' + self.proxyPort);
+      defer.resolve();
+    });
+  });
+
+  return defer.promise;
+};
+
+ControllerPlanetRockRadio.prototype.setupEventSource = function() {
+  var self = this;
+  
+  if (!self.aisSessionId) {
+    self.logger.error('No AISSessionId available for EventSource connection');
+    return;
+  }
+
+  const url = 'https://stream-mz.hellorayo.co.uk/metadata?type=json';
+  self.logger.info('Connecting to EventSource URL: ' + url);
+  
+  const options = {
+    headers: {
+      'Cookie': self.aisSessionId,
+      'Accept': 'text/event-stream',
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15'
+    },
+    rejectUnauthorized: false
+  };
+
+  // Close existing EventSource if any
+  if (self.eventSource) {
+    self.logger.info('Closing existing EventSource connection');
+    self.eventSource.close();
+  }
+
+  // Create new EventSource connection
+  self.eventSource = new EventSource(url, options);
+
+  self.eventSource.onopen = function() {
+    self.logger.info('EventSource connection established');
+  };
+
+  self.eventSource.onerror = function(error) {
+    const timestamp = new Date().toISOString();
+    self.logger.error(`[${timestamp}] EventSource error details:`);
+    self.logger.error(`[${timestamp}] - Error object:`, JSON.stringify(error, null, 2));
+    self.logger.error(`[${timestamp}] - ReadyState:`, self.eventSource.readyState);
+    self.logger.error(`[${timestamp}] - URL:`, url);
+    self.logger.error(`[${timestamp}] - Headers:`, JSON.stringify(options.headers, null, 2));
+    
+    if (self.eventSource.readyState === EventSource.CLOSED) {
+      self.logger.info(`[${timestamp}] Connection closed, attempting to reconnect in 1 second...`);
+      setTimeout(() => self.setupEventSource(), 1000);
+    }
+  };
+
+  self.eventSource.onmessage = function(event) {
+    try {
+      self.logger.info('Received raw EventSource message: ' + event.data);
+      
+      const messageData = JSON.parse(event.data);
+      self.logger.info('Parsed EventSource message: ' + JSON.stringify(messageData, null, 2));
+      
+      if (messageData['metadata-list'] && messageData['metadata-list'].length > 0) {
+        const metadata = messageData['metadata-list'][0].metadata;
+        self.logger.info('Extracted metadata string: ' + metadata);
+        
+        const metadataObj = self.parseMetadataString(metadata);
+        self.logger.info('Parsed metadata object: ' + JSON.stringify(metadataObj, null, 2));
+        
+        if (metadataObj.url) {
+          if (metadataObj.url.endsWith('/eventdata/-1')) {
+            self.logger.info('Received -1 event data URL, fetching show information');
+            self.fetchShowData()
+              .then(metadata => self.updateMetadata(metadata));
+            return;
+          }
+
+          // Fetch track data from the API
+          axios.get(metadataObj.url)
+            .then(response => {
+              self.logger.info('Track data response: ' + JSON.stringify(response.data, null, 2));
+              
+              if (response.data) {
+                const trackData = response.data;
+                const metadata = self.createMetadataObject(
+                  trackData.eventSongTitle,
+                  trackData.eventSongArtist,
+                  '',
+                  trackData.eventImageUrl
+                );
+                self.updateMetadata(metadata);
+              }
+            })
+            .catch(error => {
+              self.logger.error('Failed to fetch track data: ' + error.message);
+              const metadata = self.createMetadataObject('Unknown Track', 'Planet Rock', '', '');
+              self.updateMetadata(metadata);
+            });
+        }
+      }
+    } catch (error) {
+      self.logger.error('Failed to parse EventSource message: ' + error.message);
+      self.logger.error('Raw message data: ' + event.data);
+    }
+  };
+};
+
+ControllerPlanetRockRadio.prototype.parseMetadataString = function(metadata) {
+  const metadataObj = {};
+  metadata.split(',').forEach(pair => {
+    const [key, value] = pair.split('=');
+    if (key && value) {
+      metadataObj[key] = value.replace(/^"|"$/g, '');
+    }
+  });
+  return metadataObj;
+};
+
+ControllerPlanetRockRadio.prototype.createMetadataObject = function(title, artist, album, albumart, uri) {
+  return {
+    title: title || 'Unknown Track',
+    artist: artist || 'Planet Rock',
+    album: album || '',
+    albumart: albumart || '/albumart?sourceicon=music_service/planetrock_radio/assets/planetrock_radio.webp',
+    uri: uri || 'http://localhost:' + this.proxyPort + '/stream'
+  };
+};
+
+ControllerPlanetRockRadio.prototype.updateMetadata = function(metadata) {
+  const self = this;
+  
+  if (self.isFirstMetadataUpdate) {
+    self.logger.info('First metadata update, applying immediately');
+    self.pushSongState(metadata);
+    self.isFirstMetadataUpdate = false;
+  } else {
+    // Clear any existing timer
+    if (self.metadataUpdateTimer) {
+      self.logger.info('Clearing existing metadata update timer');
+      clearTimeout(self.metadataUpdateTimer);
+    }
+    
+    const delay = parseInt(self.config.get('metadata_delay')) * 1000;
+    self.logger.info(`Delaying metadata update by ${delay/1000} seconds...`);
+    self.metadataUpdateTimer = setTimeout(() => {
+      self.logger.info('Updating metadata after delay:', JSON.stringify(metadata, null, 2));
+      self.pushSongState(metadata);
+      self.metadataUpdateTimer = null;
+    }, delay);
+  }
+};
+
+ControllerPlanetRockRadio.prototype.fetchShowData = function() {
+  const self = this;
+  return axios.get('https://listenapi.planetradio.co.uk/api9.2/stations_nowplaying/GB?StationCode%5B%5D=pln&premium=1')
+    .then(response => {
+      self.logger.info('Show data response:', JSON.stringify(response.data, null, 2));
+      
+      if (response.data && response.data[0] && response.data[0].stationOnAir) {
+        const showData = response.data[0].stationOnAir;
+        return self.createMetadataObject(
+          showData.episodeTitle,
+          'Planet Rock',
+          showData.episodeDescription,
+          showData.episodeImageUrl
+        );
+      }
+      throw new Error('No show data available');
+    })
+    .catch(error => {
+      self.logger.error('Failed to fetch show data:', error.message);
+      return self.createMetadataObject('Non stop music', 'Planet Rock', '', '');
+    });
 };
 
 ControllerPlanetRockRadio.prototype.clearAddPlayTrack = function(track) {
@@ -389,21 +659,23 @@ ControllerPlanetRockRadio.prototype.clearAddPlayTrack = function(track) {
   // First authenticate
   self.authenticate()
     .then(function() {
-      // Update the track URI with the authenticated user ID
-      var currentEpoch = Math.floor(Date.now() / 1000);
-      var authenticatedUri = track.uri.replace(/listenerid=[^&]*/, 'listenerid=' + self.userId)
-                                    .replace(/aw_0_1st\.bauer_listenerid=[^&]*/, 'aw_0_1st.bauer_listenerid=' + self.userId)
-                                    .replace(/user_id=[^&]*/, 'user_id=' + self.userId)
-                                    .replace(/aw_0_1st\.bauer_user_id=[^&]*/, 'aw_0_1st.bauer_user_id=' + self.userId)
-                                    .replace(/aw_0_1st\.skey=[^&]*/, 'aw_0_1st.skey=' + currentEpoch);
-
+      // Start proxy server if not already running
+      if (!self.proxyServer) {
+        return self.startProxyServer();
+      }
+      return libQ.resolve();
+    })
+    .then(function() {
+      // Update track URI to use local proxy
+      track.uri = 'http://localhost:' + self.proxyPort + '/stream';
+      
       return self.mpdPlugin.sendMpdCommand('stop', []);
     })
     .then(function () {
       return self.mpdPlugin.sendMpdCommand('clear', []);
     })
     .then(function () {
-      return self.mpdPlugin.sendMpdCommand('add "' + authenticatedUri + '"', []);
+      return self.mpdPlugin.sendMpdCommand('add "' + track.uri + '"', []);
     })
     .then(function () {
       return self.mpdPlugin.sendMpdCommand('consume 1', []);
@@ -414,13 +686,10 @@ ControllerPlanetRockRadio.prototype.clearAddPlayTrack = function(track) {
         self.getRadioI18nString('WAIT_FOR_RADIO_CHANNEL'));
 
       return self.mpdPlugin.sendMpdCommand('play', []);
-    }).then(function () {
+    })
+    .then(function () {
       self.state.status = 'play';
       self.commandRouter.servicePushState(self.state, self.serviceName);
-      
-      // Start fetching now playing data
-      self.fetchNowPlaying();
-      
       return libQ.resolve();
     })
     .fail(function (e) {
@@ -431,188 +700,122 @@ ControllerPlanetRockRadio.prototype.clearAddPlayTrack = function(track) {
 
 ControllerPlanetRockRadio.prototype.pushSongState = function(metadata) {
   var self = this;
-  var planetRockState = {
-    status: 'play',
-    service: self.serviceName,
-    type: 'webradio',
-    trackType: 'aac',
-    radioType: 'planetrock',
-    albumart: metadata.albumart,
-    uri: metadata.uri,
-    name: metadata.title,
-    title: metadata.title,
-    artist: metadata.artist,
-    album: metadata.album,
-    streaming: true,
-    disableUiControls: true,
-    duration: metadata.duration,
-    seek: 0,
-    samplerate: '44.1 KHz',
-    bitdepth: '16 bit',
-    channels: 2
-  };
-
-  self.state = planetRockState;
-
-  // Workaround to allow state to be pushed when not in a volatile state
-  var vState = self.commandRouter.stateMachine.getState();
-  var queueItem = self.commandRouter.stateMachine.playQueue.arrayQueue[vState.position];
-
-  queueItem.name = metadata.title;
-  queueItem.artist = metadata.artist;
-  queueItem.album = metadata.album;
-  queueItem.albumart = metadata.albumart;
-  queueItem.trackType = 'Planet Rock';
-  queueItem.duration = metadata.duration;
-  queueItem.samplerate = '44.1 KHz';
-  queueItem.bitdepth = '16 bit';
-  queueItem.channels = 2;
   
-  // Reset volumio internal timer
-  self.commandRouter.stateMachine.currentSeek = 0;
-  self.commandRouter.stateMachine.playbackStart = Date.now();
-  self.commandRouter.stateMachine.currentSongDuration = metadata.duration;
-  self.commandRouter.stateMachine.askedForPrefetch = false;
-  self.commandRouter.stateMachine.prefetchDone = false;
-  self.commandRouter.stateMachine.simulateStopStartDone = false;
-
-  // Volumio push state
-  self.commandRouter.servicePushState(planetRockState, self.serviceName);
-};
-
-ControllerPlanetRockRadio.prototype.fetchNowPlaying = function() {
-  var self = this;
-  
-  if (self.nowPlayingTimer) {
-    clearTimeout(self.nowPlayingTimer);
-    self.nowPlayingTimer = null;
-  }
-
-  self.logger.info('Fetching now playing data from Planet Rock API...');
-  unirest.get('https://listenapi.planetradio.co.uk/api9.2/stations_nowplaying/GB?StationCode%5B%5D=pln&premium=1')
-    .end(function(response) {
-      if (response.error) {
-        self.logger.error('Failed to fetch now playing data: ' + response.error);
-        self.logger.error('Response status: ' + response.status);
-        self.logger.error('Response headers: ' + JSON.stringify(response.headers, null, 2));
-        // Retry in 10 seconds on error
-        self.nowPlayingTimer = setTimeout(function() {
-          self.fetchNowPlaying();
-        }, 10000);
-        return;
-      }
-
-      try {
-        self.logger.info('Response type: ' + typeof response.body);
-        self.logger.info('Response body length: ' + (response.body ? response.body.length : 0));
-        self.logger.info('Raw API response: ' + response.body);
-        
-        // Check if response.body is already an object
-        var data;
-        if (typeof response.body === 'object') {
-          self.logger.info('Response body is already an object, no need to parse');
-          data = response.body;
-        } else {
-          self.logger.info('Attempting to parse response body as JSON');
-          data = JSON.parse(response.body);
-        }
-        
-        if (!data) {
-          throw new Error('Empty response from API');
-        }
-        
-        if (!data[0]) {
-          throw new Error('No station data in response');
-        }
-
-        var nowPlaying = data[0].stationNowPlaying;
-        var onAir = data[0].stationOnAir;
-        
-        self.logger.info('Now Playing data: ' + JSON.stringify(nowPlaying, null, 2));
-        self.logger.info('On Air data: ' + JSON.stringify(onAir, null, 2));
-        
-        // Default to episode information
-        var metadata = {
-          title: onAir.episodeTitle,
-          artist: 'Planet Rock',
-          album: 'Planet Rock',
-          albumart: onAir.episodeImageUrl,
-          duration: onAir.episodeDuration,
-          uri: self.state.uri // Keep the current stream URI
-        };
-
-        // Check if we have valid now playing track data
-        var hasValidTrackData = nowPlaying && 
-                              nowPlaying.nowPlayingTrack && 
-                              nowPlaying.nowPlayingArtist &&
-                              nowPlaying.nowPlayingTrack !== self.state.title &&
-                              nowPlaying.nowPlayingArtist !== self.state.artist;
-
-        self.logger.info('Has valid track data: ' + hasValidTrackData);
-        if (nowPlaying) {
-          self.logger.info('Current track: ' + nowPlaying.nowPlayingTrack);
-          self.logger.info('Current artist: ' + nowPlaying.nowPlayingArtist);
-          self.logger.info('Current state title: ' + self.state.title);
-          self.logger.info('Current state artist: ' + self.state.artist);
-        }
-
-        // If we have valid track data, use that instead
-        if (hasValidTrackData) {
-          metadata.title = nowPlaying.nowPlayingTrack;
-          metadata.artist = nowPlaying.nowPlayingArtist;
-          metadata.albumart = nowPlaying.nowPlayingImage;
-          metadata.duration = nowPlaying.nowPlayingDuration;
-          self.logger.info('Using track data for metadata');
-        } else {
-          self.logger.info('Using episode data for metadata');
-        }
-
-        // Update state using the Radio Paradise approach
-        self.pushSongState(metadata);
-        
-        // Calculate next update time
-        var endTime, duration;
-        if (hasValidTrackData) {
-          endTime = new Date(nowPlaying.nowPlayingTime);
-          duration = nowPlaying.nowPlayingDuration;
-          self.logger.info('Using track timing - End time: ' + endTime + ', Duration: ' + duration);
-        } else {
-          endTime = new Date(onAir.episodeStart);
-          duration = onAir.episodeDuration;
-          self.logger.info('Using episode timing - End time: ' + endTime + ', Duration: ' + duration);
-        }
-
-        var nextUpdate = new Date(endTime.getTime() + (duration * 1000));
-        var now = new Date();
-        var delay = Math.max(0, nextUpdate.getTime() - now.getTime());
-
-        // If we're using episode data or the track data hasn't changed,
-        // poll every 10 seconds instead of waiting for the full duration
-        if (!hasValidTrackData) {
-          delay = 10000;
-          self.logger.info('Using 10 second polling interval');
-        } else {
-          self.logger.info('Using calculated delay: ' + delay + 'ms');
-        }
-        
-        self.nowPlayingTimer = setTimeout(function() {
-          self.fetchNowPlaying();
-        }, delay);
-      } catch (error) {
-        self.logger.error('Error processing now playing data: ' + error.message);
-        self.logger.error('Error stack: ' + error.stack);
-        if (response && response.body) {
-          self.logger.error('Response body that caused error: ' + response.body);
-          self.logger.error('Response body type: ' + typeof response.body);
-          if (typeof response.body === 'object') {
-            self.logger.error('Response body keys: ' + Object.keys(response.body));
+  self.logger.info('pushSongState called. Fetching MPD status...');
+  // Get MPD status to get actual audio format
+  self.mpdPlugin.sendMpdCommand('status', [])
+    .then(function (status) {
+      self.logger.info('MPD status command returned. Response received:');
+      self.logger.info('----------------- MPD STATUS START -----------------');
+      self.logger.info('Type of status response: ' + typeof status);
+      self.logger.info('Is status response null? ' + (status === null));
+      self.logger.info('Raw status response (stringified): ' + JSON.stringify(status, null, 2));
+      self.logger.info('------------------ MPD STATUS END ------------------');
+      
+      if (status) {
+        self.logger.info('Parsing MPD status for audio info.');
+        // Handle samplerate from 'audio' string (e.g., "44100:f:2")
+        if (typeof status.audio === 'string') {
+          const audioParts = status.audio.split(':');
+          if (audioParts.length > 0 && audioParts[0]) {
+            self.state.samplerate = audioParts[0] + ' Hz';
+            self.logger.info('Parsed samplerate: ' + self.state.samplerate);
+          } else {
+            self.state.samplerate = '-';
           }
+        } else {
+          self.logger.warn('status.audio is not a string or is missing.');
+          self.state.samplerate = '-';
         }
-        // Retry in 10 seconds on error
-        self.nowPlayingTimer = setTimeout(function() {
-          self.fetchNowPlaying();
-        }, 10000);
+
+        // Handle bitrate
+        if (status.bitrate) {
+          self.state.bitrate = status.bitrate + ' kbps';
+          self.logger.info('Parsed bitrate: ' + self.state.bitrate);
+        } else {
+          self.state.bitrate = '-';
+        }
+      } else {
+        self.logger.warn('MPD status object is empty or null.');
+        self.state.samplerate = '-';
+        self.state.bitrate = '-';
       }
+
+      var planetRockState = {
+        status: 'play',
+        service: self.serviceName,
+        type: 'webradio',
+        trackType: 'webradio',
+        radioType: 'planetrock',
+        albumart: metadata.albumart,
+        uri: metadata.uri,
+        name: metadata.title,
+        title: metadata.title,
+        artist: metadata.artist,
+        duration: 0,
+        streaming: true,
+        disableUiControls: true,
+        seek: false,
+        pause: false,
+        stop: true,
+        samplerate: self.state.samplerate || '-',
+        bitrate: self.state.bitrate || '-',
+        channels: 2
+      };
+
+      self.state = planetRockState;
+
+      // Workaround to allow state to be pushed when not in a volatile state
+      var vState = self.commandRouter.stateMachine.getState();
+      var queueItem = self.commandRouter.stateMachine.playQueue.arrayQueue[vState.position];
+
+      queueItem.name = metadata.title;
+      queueItem.artist = metadata.artist;
+      queueItem.albumart = metadata.albumart;
+      queueItem.trackType = 'webradio';
+      queueItem.duration = 0;
+      queueItem.samplerate = self.state.samplerate || '-';
+      queueItem.bitrate = self.state.bitrate || '-';
+      queueItem.channels = 2;
+      
+      // Reset volumio internal timer
+      self.commandRouter.stateMachine.currentSeek = 0;
+      self.commandRouter.stateMachine.playbackStart = Date.now();
+      self.commandRouter.stateMachine.currentSongDuration = 0;
+      self.commandRouter.stateMachine.askedForPrefetch = false;
+      self.commandRouter.stateMachine.prefetchDone = false;
+      self.commandRouter.stateMachine.simulateStopStartDone = false;
+
+      // Volumio push state
+      self.commandRouter.servicePushState(planetRockState, self.serviceName);
+    })
+    .fail(function(error) {
+      self.logger.error('Failed to get MPD status:', error);
+      // Still update the state with metadata even if MPD status fails
+      var planetRockState = {
+        status: 'play',
+        service: self.serviceName,
+        type: 'webradio',
+        trackType: 'webradio',
+        radioType: 'planetrock',
+        albumart: metadata.albumart,
+        uri: metadata.uri,
+        name: metadata.title,
+        title: metadata.title,
+        artist: metadata.artist,
+        duration: 0,
+        streaming: true,
+        disableUiControls: true,
+        seek: false,
+        pause: false,
+        stop: true,
+        samplerate: '-',
+        bitrate: '-',
+        channels: 2
+      };
+
+      self.state = planetRockState;
+      self.commandRouter.servicePushState(planetRockState, self.serviceName);
     });
 };
 
@@ -620,20 +823,54 @@ ControllerPlanetRockRadio.prototype.stop = function() {
   var self = this;
   var defer = libQ.defer();
 
-  // Clear the now playing timer
-  if (self.nowPlayingTimer) {
-    clearTimeout(self.nowPlayingTimer);
-    self.nowPlayingTimer = null;
+  // Clear any pending metadata update timer
+  if (self.metadataUpdateTimer) {
+    self.logger.info('Clearing pending metadata update timer');
+    clearTimeout(self.metadataUpdateTimer);
+    self.metadataUpdateTimer = null;
   }
 
-  // Stop MPD playback
+  // Close EventSource connection immediately
+  if (self.eventSource) {
+    self.logger.info('Closing EventSource connection');
+    self.eventSource.close();
+    self.eventSource = null;
+  }
+
+  // Stop MPD playback first
   return self.mpdPlugin.sendMpdCommand('stop', [])
     .then(function() {
       return self.mpdPlugin.sendMpdCommand('clear', []);
     })
     .then(function() {
+      // Close proxy server after MPD is stopped
+      if (self.proxyServer) {
+        self.logger.info('Closing proxy server');
+        self.proxyServer.close();
+        self.proxyServer = null;
+        self.proxyPort = null;
+      }
+
+      // Reset first update flag
+      self.isFirstMetadataUpdate = true;
+
       self.state.status = 'stop';
       self.commandRouter.servicePushState(self.state, self.serviceName);
+      return libQ.resolve();
+    })
+    .fail(function(error) {
+      self.logger.error('Error stopping playback: ' + error);
+      // Even if MPD commands fail, close proxy and update state
+      if (self.proxyServer) {
+        self.logger.info('Closing proxy server after MPD error');
+        self.proxyServer.close();
+        self.proxyServer = null;
+        self.proxyPort = null;
+      }
+      self.isFirstMetadataUpdate = true;
+      self.state.status = 'stop';
+      self.commandRouter.servicePushState(self.state, self.serviceName);
+      return libQ.resolve();
     });
 };
 
@@ -641,7 +878,7 @@ ControllerPlanetRockRadio.prototype.pause = function() {
   var self = this;
   var defer = libQ.defer();
 
-  self.commandRouter.volumioPause();
+  self.commandRouter.volumioStop();
 
   return defer.promise;
 };
@@ -659,8 +896,6 @@ ControllerPlanetRockRadio.prototype.seek = function(position) {
   var self = this;
   var defer = libQ.defer();
 
-  self.commandRouter.volumioSeek(position);
-
   return defer.promise;
 };
 
@@ -676,8 +911,6 @@ ControllerPlanetRockRadio.prototype.next = function() {
 ControllerPlanetRockRadio.prototype.previous = function() {
   var self = this;
   var defer = libQ.defer();
-
-  self.commandRouter.volumioPrevious();
 
   return defer.promise;
 }; 

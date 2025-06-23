@@ -1,18 +1,26 @@
 {
-    "PLUGIN_NAME": "Planet Rock",
-    "WAIT_FOR_RADIO": "Please wait for Planet Rock radio...",
+    "PLUGIN_NAME": "Planet Rock Radio",
+    "WAIT_FOR_RADIO_CHANNEL": "Waiting for Planet Rock Radio channel...",
     "STOP_RADIO": "Stopped Planet Rock radio",
     "ERROR_STREAM_SERVER": "There is a problem with the Planet Rock streaming server.",
-    "ERROR_AUTH": "Authentication failed. Please check your credentials.",
-    "ERROR_AUTH_REQUIRED": "Please configure your Planet Rock account credentials.",
+    "ERROR_AUTH": "Authentication failed",
+    "ERROR_AUTH_REQUIRED": "Authentication required",
     "CONFIG": {
-        "TITLE": "Planet Rock Radio",
-        "ABOUT": "About Planet Rock Radio",
-        "DESCRIPTION": "Planet Rock is a British digital radio station owned and operated by Bauer Media Audio UK as part of the Greatest Hits Radio Network. The station broadcasts classic rock music and is available nationally on DAB digital radio, online and on digital television.",
+        "TITLE": "Planet Rock Radio Configuration",
+        "SETTINGS": "Settings",
+        "SETTINGS_DESCRIPTION": "Configure your Planet Rock Radio settings",
         "AUTH": "Authentication",
-        "AUTH_DESCRIPTION": "Enter your Planet Rock account credentials to access the premium stream.",
-        "USERNAME": "Email",
+        "AUTH_DESCRIPTION": "Enter your Planet Rock Radio credentials",
+        "USERNAME": "Username",
+        "USERNAME_PLACEHOLDER": "Enter your Planet Rock username",
         "PASSWORD": "Password",
-        "SAVE": "Save"
+        "PASSWORD_PLACEHOLDER": "Enter your Planet Rock password",
+        "SAVE": "Save",
+        "METADATA": "Metadata Settings",
+        "METADATA_DESCRIPTION": "Configure how metadata is displayed",
+        "METADATA_DELAY": "Metadata Update Delay (seconds)",
+        "METADATA_DELAY_PLACEHOLDER": "Enter delay in seconds",
+        "ABOUT": "About",
+        "DESCRIPTION": "Planet Rock Radio plugin for Volumio"
     }
 }

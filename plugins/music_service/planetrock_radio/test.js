@@ -75,9 +75,6 @@ function startStreaming(userId) {
         // Restart the stream on error
         setTimeout(() => startStreaming(userId), 1000);
     });
-
-    // Start metadata connection immediately
-    setupEventSource();
 }
 
 // Setup EventSource connection
@@ -94,15 +91,6 @@ function setupEventSource() {
         headers: {
             'Cookie': aisSessionId,
             'Accept': 'text/event-stream',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Accept-Language': 'en-GB,en;q=0.9',
-            'Cache-Control': 'no-cache',
-            'Connection': 'keep-alive',
-            'Pragma': 'no-cache',
-            'Priority': 'u=3, i',
-            'Sec-Fetch-Dest': 'empty',
-            'Sec-Fetch-Mode': 'cors',
-            'Sec-Fetch-Site': 'same-site',
             'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15'
         },
         rejectUnauthorized: false
@@ -110,64 +98,82 @@ function setupEventSource() {
 
     console.log('EventSource options:', JSON.stringify(options, null, 2));
 
-    // First try a fetch request
-    axios.get(url, {
-        headers: options.headers,
-        httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
-    })
-    .then(response => {
-        console.log('Fetch response status:', response.status);
-        console.log('Fetch response headers:', response.headers);
+    // Close existing EventSource if any
+    if (eventSource) {
+        console.log('Closing existing EventSource connection');
+        eventSource.close();
+    }
+
+    // Create new EventSource connection
+    eventSource = new EventSource(url, options);
+
+    eventSource.onopen = function() {
+        const timestamp = new Date().toISOString();
+        console.log(`[${timestamp}] EventSource connection established`);
+        console.log(`[${timestamp}] EventSource readyState:`, eventSource.readyState);
+    };
+
+    eventSource.onerror = function(error) {
+        const timestamp = new Date().toISOString();
+        console.error(`[${timestamp}] EventSource error details:`);
+        console.error(`[${timestamp}] - ReadyState:`, eventSource.readyState);
         
-        if (response.error) {
-            console.error('Fetch error:', response.error);
-            return;
+        // If connection is closed, restart it
+        if (eventSource.readyState === EventSource.CLOSED) {
+            console.log(`[${timestamp}] Connection closed, restarting...`);
+            setTimeout(setupEventSource, 1000);
         }
+    };
 
-        // Close existing EventSource if any
-        if (eventSource) {
-            eventSource.close();
+    eventSource.onmessage = function(event) {
+        const timestamp = new Date().toISOString();
+        console.log(`[${timestamp}] Received EventSource message:`, event.data);
+        
+        try {
+            const messageData = JSON.parse(event.data);
+            console.log(`[${timestamp}] Parsed EventSource message:`, JSON.stringify(messageData, null, 2));
+            
+            if (messageData['metadata-list'] && messageData['metadata-list'].length > 0) {
+                const metadata = messageData['metadata-list'][0].metadata;
+                console.log(`[${timestamp}] Extracted metadata string:`, metadata);
+                
+                // Parse the metadata string which is in format: key="value",key2="value2"
+                const metadataObj = {};
+                metadata.split(',').forEach(pair => {
+                    const [key, value] = pair.split('=');
+                    if (key && value) {
+                        // Remove quotes from value
+                        metadataObj[key] = value.replace(/^"|"$/g, '');
+                    }
+                });
+                
+                console.log(`[${timestamp}] Parsed metadata object:`, JSON.stringify(metadataObj, null, 2));
+                
+                // If we have a URL, fetch the track data
+                if (metadataObj.url) {
+                    // Skip the -1 event data URL
+                    if (metadataObj.url.endsWith('/eventdata/-1')) {
+                        console.log(`[${timestamp}] Skipping -1 event data URL`);
+                        return;
+                    }
+
+                    // Fetch track data from the API
+                    console.log(`[${timestamp}] Fetching event data from:`, metadataObj.url);
+                    axios.get(metadataObj.url)
+                        .then(response => {
+                            console.log(`[${timestamp}] Event data response:`, JSON.stringify(response.data, null, 2));
+                        })
+                        .catch(error => {
+                            console.error(`[${timestamp}] Failed to fetch event data:`, error.message);
+                            console.error(`[${timestamp}] Error details:`, JSON.stringify(error, null, 2));
+                        });
+                }
+            }
+        } catch (error) {
+            console.error(`[${timestamp}] Failed to parse EventSource message:`, error);
+            console.error(`[${timestamp}] Raw message data:`, event.data);
         }
-
-        // Now try the EventSource connection
-        eventSource = new EventSource(url, options);
-
-        eventSource.onopen = function() {
-            const timestamp = new Date().toISOString();
-            console.log(`[${timestamp}] EventSource connection established`);
-            console.log(`[${timestamp}] EventSource readyState:`, eventSource.readyState);
-        };
-
-        eventSource.onerror = function(error) {
-            const timestamp = new Date().toISOString();
-            console.error(`[${timestamp}] EventSource error details:`);
-            console.error(`[${timestamp}] - Error object:`, JSON.stringify(error, null, 2));
-            console.error(`[${timestamp}] - ReadyState:`, eventSource.readyState);
-            
-            // If connection is closed, restart it
-            if (eventSource.readyState === EventSource.CLOSED) {
-                console.log(`[${timestamp}] Connection closed, restarting...`);
-                setTimeout(setupEventSource, 1000);
-            }
-        };
-
-        eventSource.onmessage = function(event) {
-            const timestamp = new Date().toISOString();
-            console.log(`[${timestamp}] Received EventSource message:`, event.data);
-            
-            try {
-                const messageData = JSON.parse(event.data);
-                console.log(`[${timestamp}] Parsed EventSource message:`, JSON.stringify(messageData, null, 2));
-            } catch (error) {
-                console.error(`[${timestamp}] Failed to parse EventSource message:`, error);
-                console.error(`[${timestamp}] Raw message data:`, event.data);
-            }
-        };
-    })
-    .catch(error => {
-        console.error('Fetch error:', error);
-        setTimeout(setupEventSource, 1000);
-    });
+    };
 }
 
 // Main execution
