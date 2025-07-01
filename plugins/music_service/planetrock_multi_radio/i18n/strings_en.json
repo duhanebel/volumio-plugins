@@ -1,0 +1,26 @@
+{
+    "PLUGIN_NAME": "Planet Rock Radio",
+    "WAIT_FOR_RADIO_CHANNEL": "Waiting for Planet Rock Radio channel...",
+    "STOP_RADIO": "Stopped Planet Rock radio",
+    "ERROR_STREAM_SERVER": "There is a problem with the Planet Rock streaming server.",
+    "ERROR_AUTH": "Authentication failed",
+    "ERROR_AUTH_REQUIRED": "Authentication required",
+    "CONFIG": {
+        "TITLE": "Planet Rock Radio Configuration",
+        "SETTINGS": "Settings",
+        "SETTINGS_DESCRIPTION": "Configure your Planet Rock Radio settings",
+        "AUTH": "Authentication",
+        "AUTH_DESCRIPTION": "Enter your Planet Rock Radio credentials",
+        "USERNAME": "Username",
+        "USERNAME_PLACEHOLDER": "Enter your Planet Rock username",
+        "PASSWORD": "Password",
+        "PASSWORD_PLACEHOLDER": "Enter your Planet Rock password",
+        "SAVE": "Save",
+        "METADATA": "Metadata Settings",
+        "METADATA_DESCRIPTION": "Configure how metadata is displayed",
+        "METADATA_DELAY": "Metadata Update Delay (seconds)",
+        "METADATA_DELAY_PLACEHOLDER": "Enter delay in seconds",
+        "ABOUT": "About",
+        "DESCRIPTION": "Planet Rock Radio plugin for Volumio"
+    }
+}
