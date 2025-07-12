@@ -30,6 +30,7 @@ function ControllerPlanetRockRadio(context) {
   self.metadataUpdateTimer = null; // Add timer reference
   self.currentStationCode = 'pln'; // default
   self.lastStreamUrl = null;
+  self.hlsCleanupFunction = null; // For HLS stream cleanup
 
   self.logger.info("ControllerPlanetRockRadio::constructor");
 }
@@ -49,21 +50,19 @@ ControllerPlanetRockRadio.prototype.getConfigurationFiles = function () {
 ControllerPlanetRockRadio.prototype.onStart = function() {
   var self = this;
   self.mpdPlugin = this.commandRouter.pluginManager.getPlugin('music_service','mpd');
+  self.serviceName = "planetrock_multi_radio";
   self.addToBrowseSources();
-  self.serviceName = "planetrock_radio";
   return libQ.resolve();
 };
 
 ControllerPlanetRockRadio.prototype.onStop = function() {
   var self = this;
-  if (self.eventSource) {
-    self.eventSource.close();
-    self.eventSource = null;
-  }
-  if (self.proxyServer) {
-    self.proxyServer.close();
-    self.proxyServer = null;
-  }
+  self.logger.info('Plugin stopping - cleaning up all resources');
+  
+  // Reset all streaming state
+  self.resetStreamingState();
+  
+  self.logger.info('Plugin cleanup completed');
   return libQ.resolve();
 };
 
@@ -80,7 +79,7 @@ ControllerPlanetRockRadio.prototype.getConf = function(configFile) {
 
 ControllerPlanetRockRadio.prototype.setConf = function(conf) {
   var self = this;
-  fs.writeJsonSync(self.configFile, JSON.stringify(conf));
+  self.config.saveFile();
 };
 
 ControllerPlanetRockRadio.prototype.getUIConfig = function() {
@@ -115,18 +114,22 @@ ControllerPlanetRockRadio.prototype.getRadioI18nString = function(key) {
 
 ControllerPlanetRockRadio.prototype.addToBrowseSources = function () {
   var self = this;
+  self.logger.info('Adding Planet Rock Multi Radio to browse sources');
   self.commandRouter.volumioAddToBrowseSources({
     name: self.getRadioI18nString('PLUGIN_NAME'),
-    uri: 'planetrock',
+    uri: 'planetrock_multi',
     plugin_type: 'music_service',
-    plugin_name: "planetrock_radio",
-    albumart: '/albumart?sourceicon=music_service/planetrock_radio/assets/planetrock_radio.webp'
+    plugin_name: "planetrock_multi_radio",
+    albumart: '/albumart?sourceicon=music_service/planetrock_multi_radio/assets/planetrock_multi_radio.webp'
   });
+  self.logger.info('Planet Rock Multi Radio added to browse sources');
 };
 
 ControllerPlanetRockRadio.prototype.handleBrowseUri = function (curUri) {
   var self = this;
   var defer = libQ.defer();
+  
+  self.logger.info('handleBrowseUri called with URI: ' + curUri);
 
   if (curUri.startsWith('planetradio/')) {
     // User selected a related station, fetch its info and resolve stream URL
@@ -148,17 +151,11 @@ ControllerPlanetRockRadio.prototype.handleBrowseUri = function (curUri) {
         if (!streamUrl) {
           throw new Error('No suitable stream found for station ' + stationCode);
         }
-        const currentEpoch = Math.floor(Date.now() / 1000);
-        const finalStreamUrl = streamUrl +
-          '?direct=false' +
-          '&listenerid=' + (self.userId || '') +
-          '&aw_0_1st.bauer_listenerid=' + (self.userId || '') +
-          '&aw_0_1st.playerid=BMUK_inpage_html5' +
-          '&aw_0_1st.skey=' + currentEpoch +
-          '&aw_0_1st.bauer_loggedin=true' +
-          '&user_id=' + (self.userId || '') +
-          '&aw_0_1st.bauer_user_id=' + (self.userId || '') +
-          '&region=GB';
+        
+        // Detect stream type
+        const streamType = self.detectStreamType(streamUrl);
+        self.logger.info(`[handleBrowseUri] Detected stream type: ${streamType} for station ${stationCode}`);
+        
         // Return a single playable item
         const item = {
           service: self.serviceName,
@@ -167,9 +164,10 @@ ControllerPlanetRockRadio.prototype.handleBrowseUri = function (curUri) {
           artist: station.stationName,
           album: '',
           icon: 'fa fa-music',
-          uri: finalStreamUrl,
-          streamType: 'aac',
-          albumart: station.stationHeaderLogo || '/albumart?sourceicon=music_service/planetrock_radio/assets/planetrock_radio.webp'
+          uri: 'planetradio/' + stationCode, // Use custom URI for on-demand resolution
+          streamUrl: streamUrl, // Store basic stream URL without parameters
+          streamType: streamType, // Add stream type
+          albumart: station.stationHeaderLogo || '/albumart?sourceicon=music_service/planetrock_multi_radio/assets/planetrock_multi_radio.webp'
         };
         defer.resolve({
           navigation: {
@@ -191,8 +189,8 @@ ControllerPlanetRockRadio.prototype.handleBrowseUri = function (curUri) {
     return defer.promise;
   }
 
-  if (curUri.startsWith('planetrock')) {
-    if (curUri === 'planetrock') {
+  if (curUri.startsWith('planetrock_multi')) {
+    if (curUri === 'planetrock_multi') {
       self.getRootContent()
         .then(function(response) {
           defer.resolve(response);
@@ -235,6 +233,10 @@ ControllerPlanetRockRadio.prototype.updateConfig = function(data) {
     // Clear any existing auth tokens when credentials change
     self.csrfToken = null;
     self.sessionCookie = null;
+    
+    // Save the configuration to file
+    self.config.saveFile();
+    self.logger.info('Configuration updated and saved');
   }
 
   defer.resolve();
@@ -427,7 +429,7 @@ ControllerPlanetRockRadio.prototype.getRootContent = function() {
           icon: 'fa fa-music',
           uri: uri,
           streamType: 'aac',
-          albumart: station.stationHeaderLogo || '/albumart?sourceicon=music_service/planetrock_radio/assets/planetrock_radio.webp'
+          albumart: station.stationHeaderLogo || '/albumart?sourceicon=music_service/planetrock_multi_radio/assets/planetrock_multi_radio.webp'
         };
       });
 
@@ -479,17 +481,10 @@ ControllerPlanetRockRadio.prototype.explodeUri = function(uri) {
           self.logger.error(`[explodeUri] No suitable stream found for station ${stationCode}`);
           throw new Error('No suitable stream found for station ' + stationCode);
         }
-        const currentEpoch = Math.floor(Date.now() / 1000);
-        const finalStreamUrl = streamUrl +
-          '?direct=false' +
-          '&listenerid=' + (self.userId || '') +
-          '&aw_0_1st.bauer_listenerid=' + (self.userId || '') +
-          '&aw_0_1st.playerid=BMUK_inpage_html5' +
-          '&aw_0_1st.skey=' + currentEpoch +
-          '&aw_0_1st.bauer_loggedin=true' +
-          '&user_id=' + (self.userId || '') +
-          '&aw_0_1st.bauer_user_id=' + (self.userId || '') +
-          '&region=GB';
+        
+        // Detect stream type
+        const streamType = self.detectStreamType(streamUrl);
+        self.logger.info(`[explodeUri] Detected stream type: ${streamType} for station ${stationCode}`);
 
         defer.resolve([{
           service: self.serviceName,
@@ -497,7 +492,9 @@ ControllerPlanetRockRadio.prototype.explodeUri = function(uri) {
           title: station.stationName,
           artist: station.stationName,
           albumart: station.stationHeaderLogo,
-          uri: finalStreamUrl,
+          uri: 'planetradio/' + stationCode, // Use custom URI for on-demand resolution
+          streamUrl: streamUrl, // Store basic stream URL without parameters
+          streamType: streamType, // Add stream type
           trackType: 'webradio'
         }]);
       })
@@ -513,7 +510,7 @@ ControllerPlanetRockRadio.prototype.explodeUri = function(uri) {
   return defer.promise;
 };
 
-ControllerPlanetRockRadio.prototype.startProxyServer = function(streamUrl) {
+ControllerPlanetRockRadio.prototype.startProxyServer = function(streamUrl, streamType) {
   var self = this;
   var defer = libQ.defer();
 
@@ -526,59 +523,15 @@ ControllerPlanetRockRadio.prototype.startProxyServer = function(streamUrl) {
     // Create the proxy server
     self.proxyServer = http.createServer(function(req, res) {
       if (req.url === '/stream') {
-        self.logger.info('Proxying stream request to: ' + streamUrl);
+        self.logger.info('Proxying stream request to: ' + streamUrl + ' (type: ' + streamType + ')');
 
-        axios({
-          method: 'get',
-          url: streamUrl,
-          responseType: 'stream',
-          headers: {
-            'Accept': '*/*',
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15'
-          },
-          httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
-        })
-        .then(response => {
-          // Get cookies from response
-          const cookies = response.headers['set-cookie'];
-          if (cookies) {
-            for (const cookie of cookies) {
-              if (cookie.startsWith('AISSessionId=')) {
-                self.aisSessionId = cookie.split(';')[0];
-                self.logger.info('Captured AISSessionId: ' + self.aisSessionId);
-                // Start metadata connection
-                self.setupEventSource();
-                break;
-              }
-            }
-          }
-
-          // Set appropriate headers
-          res.writeHead(200, {
-            'Content-Type': 'audio/aac',
-            'Transfer-Encoding': 'chunked'
-          });
-
-          // Pipe the stream
-          response.data.pipe(res);
-
-          // Handle stream end
-          response.data.on('end', () => {
-            self.logger.info('Stream ended, restarting...');
-            res.end();
-          });
-
-          // Handle stream error
-          response.data.on('error', error => {
-            self.logger.error('Stream error: ' + error);
-            res.end();
-          });
-        })
-        .catch(error => {
-          self.logger.error('Stream request error: ' + error);
-          res.writeHead(500);
-          res.end();
-        });
+        if (streamType === 'hls_m3u8') {
+          // Handle HLS/M3U8 streams
+          self.handleHlsStream(streamUrl, res);
+        } else {
+          // Handle direct AAC streams (existing logic)
+          self.handleDirectStream(streamUrl, res);
+        }
       }
     });
 
@@ -706,7 +659,7 @@ ControllerPlanetRockRadio.prototype.createMetadataObject = function(title, artis
     title: title || 'Unknown Track',
     artist: artist || 'Planet Rock',
     album: album || '',
-    albumart: albumart || '/albumart?sourceicon=music_service/planetrock_radio/assets/planetrock_radio.webp',
+    albumart: albumart || '/albumart?sourceicon=music_service/planetrock_multi_radio/assets/planetrock_multi_radio.webp',
     uri: uri || 'http://localhost:' + this.proxyPort + '/stream'
   };
 };
@@ -773,8 +726,14 @@ ControllerPlanetRockRadio.prototype.clearAddPlayTrack = function(track) {
   self.currentStationCode = stationCode;
 
   // Always extract the original stream URL (not the proxy URL)
-  const streamUrl = track.streamUrl || track.uri;
+  let streamUrl = track.streamUrl || track.uri;
+  
+  // Store the base stream URL for later use
   self.lastStreamUrl = streamUrl;
+
+  // Get stream type from track or detect it
+  const streamType = track.streamType || self.detectStreamType(streamUrl);
+  self.logger.info('Starting playback with stream type: ' + streamType);
 
   // Always close any existing proxy server and start a new one
   if (self.proxyServer) {
@@ -784,10 +743,34 @@ ControllerPlanetRockRadio.prototype.clearAddPlayTrack = function(track) {
     self.proxyPort = null;
   }
 
-  // First authenticate
+  // First authenticate, then add parameters and start proxy
   self.authenticate()
     .then(function() {
-      return self.startProxyServer(streamUrl);
+      // Add authentication parameters after authentication is complete
+      let authenticatedStreamUrl = streamUrl;
+      if (authenticatedStreamUrl && !authenticatedStreamUrl.includes('listenerid=')) {
+        const currentEpoch = Math.floor(Date.now() / 1000);
+        const authParams = [
+          'direct=false',
+          'listenerid=' + (self.userId || ''),
+          'aw_0_1st.bauer_listenerid=' + (self.userId || ''),
+          'aw_0_1st.playerid=BMUK_inpage_html5',
+          'aw_0_1st.skey=' + currentEpoch,
+          'aw_0_1st.bauer_loggedin=true',
+          'user_id=' + (self.userId || ''),
+          'aw_0_1st.bauer_user_id=' + (self.userId || ''),
+          'region=GB'
+        ].join('&');
+        
+        // Check if URL already has parameters
+        const separator = authenticatedStreamUrl.includes('?') ? '&' : '?';
+        authenticatedStreamUrl = authenticatedStreamUrl + separator + authParams;
+        
+        self.logger.info('Added authentication parameters to stream URL');
+        self.logger.info('Authenticated stream URL: ' + authenticatedStreamUrl);
+      }
+      
+      return self.startProxyServer(authenticatedStreamUrl, streamType);
     })
     .then(function() {
       // Update track URI to use local proxy
@@ -947,19 +930,7 @@ ControllerPlanetRockRadio.prototype.stop = function() {
   var self = this;
   var defer = libQ.defer();
 
-  // Clear any pending metadata update timer
-  if (self.metadataUpdateTimer) {
-    self.logger.info('Clearing pending metadata update timer');
-    clearTimeout(self.metadataUpdateTimer);
-    self.metadataUpdateTimer = null;
-  }
-
-  // Close EventSource connection immediately
-  if (self.eventSource) {
-    self.logger.info('Closing EventSource connection');
-    self.eventSource.close();
-    self.eventSource = null;
-  }
+  self.logger.info('Stopping Planet Rock Multi Radio playback');
 
   // Stop MPD playback first
   return self.mpdPlugin.sendMpdCommand('stop', [])
@@ -967,40 +938,15 @@ ControllerPlanetRockRadio.prototype.stop = function() {
       return self.mpdPlugin.sendMpdCommand('clear', []);
     })
     .then(function() {
-      // Close proxy server after MPD is stopped
-      if (self.proxyServer) {
-        self.logger.info('Closing proxy server');
-        self.proxyServer.close();
-        self.proxyServer = null;
-        self.proxyPort = null;
-      }
-
-      self.isFirstMetadataUpdate = true;
-      self.currentStationCode = null;
-
-      self.state.status = 'stop';
-      self.state.albumart = '';
-      self.state.artist = 'Planet Rock';
-      self.state.title = '';
-      self.commandRouter.servicePushState(self.state, self.serviceName);
+      // Reset all streaming state
+      self.resetStreamingState();
+      self.logger.info('Planet Rock Multi Radio playback stopped successfully');
       return libQ.resolve();
     })
     .fail(function(error) {
       self.logger.error('Error stopping playback: ' + error);
-      // Even if MPD commands fail, close proxy and update state
-      if (self.proxyServer) {
-        self.logger.info('Closing proxy server after MPD error');
-        self.proxyServer.close();
-        self.proxyServer = null;
-        self.proxyPort = null;
-      }
-      self.isFirstMetadataUpdate = true;
-      self.currentStationCode = null;
-      self.state.status = 'stop';
-      self.state.albumart = '';
-      self.state.artist = 'Planet Rock';
-      self.state.title = '';
-      self.commandRouter.servicePushState(self.state, self.serviceName);
+      // Even if MPD commands fail, reset streaming state
+      self.resetStreamingState();
       return libQ.resolve();
     });
 };
@@ -1044,4 +990,486 @@ ControllerPlanetRockRadio.prototype.previous = function() {
   var defer = libQ.defer();
 
   return defer.promise;
+}; 
+
+ControllerPlanetRockRadio.prototype.detectStreamType = function(streamUrl) {
+  var self = this;
+  // Check if the stream URL is an M3U8 playlist
+  if (streamUrl && streamUrl.includes('.m3u8')) {
+    return 'hls_m3u8';
+  }
+  // Default to direct AAC stream
+  return 'direct_aac';
+};
+
+ControllerPlanetRockRadio.prototype.parseM3u8Playlist = function(playlistContent) {
+  var self = this;
+  const lines = playlistContent.split('\n');
+  const segments = [];
+  let currentSegment = null;
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    
+    if (line.startsWith('#EXTINF:')) {
+      // Parse EXTINF line
+      const extinfMatch = line.match(/#EXTINF:([\d.]+),title="([^"]+)",url="([^"]+)"/);
+      if (extinfMatch) {
+        currentSegment = {
+          duration: parseFloat(extinfMatch[1]),
+          title: extinfMatch[2],
+          metadataUrl: extinfMatch[3],
+          segmentUrl: null
+        };
+      }
+    } else if (line && !line.startsWith('#') && currentSegment) {
+      // This is the segment URL
+      currentSegment.segmentUrl = line;
+      segments.push(currentSegment);
+      currentSegment = null;
+    }
+  }
+
+  self.logger.info('Parsed M3U8 playlist with ' + segments.length + ' segments');
+  return segments;
+};
+
+ControllerPlanetRockRadio.prototype.parseMasterPlaylist = function(playlistContent) {
+  var self = this;
+  const lines = playlistContent.split('\n');
+  const variants = [];
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    
+    if (line.startsWith('#EXT-X-STREAM-INF:')) {
+      // This is a stream variant, the next line will be the URL
+      if (i + 1 < lines.length) {
+        const variantUrl = lines[i + 1].trim();
+        if (variantUrl && !variantUrl.startsWith('#')) {
+          variants.push(variantUrl);
+          i++; // Skip the next line since we've processed it
+        }
+      }
+    }
+  }
+
+  self.logger.info('Parsed master M3U8 playlist with ' + variants.length + ' variants');
+  return variants;
+};
+
+ControllerPlanetRockRadio.prototype.fetchM3u8Playlist = function(playlistUrl) {
+  var self = this;
+  return axios.get(playlistUrl, {
+    headers: {
+      'Accept': 'application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*',
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15'
+    }
+  })
+  .then(response => {
+    self.logger.info('Fetched M3U8 playlist from: ' + playlistUrl);
+    
+    // Check if this is a master playlist (contains stream variants)
+    if (response.data.includes('#EXT-X-STREAM-INF:')) {
+      self.logger.info('Detected master playlist, fetching media playlist');
+      const variants = self.parseMasterPlaylist(response.data);
+      
+      if (variants.length > 0) {
+        // Use the first variant (usually the highest quality)
+        const mediaPlaylistUrl = variants[0];
+        self.logger.info('Fetching media playlist from: ' + mediaPlaylistUrl);
+        
+        // Fetch the media playlist
+        return axios.get(mediaPlaylistUrl, {
+          headers: {
+            'Accept': 'application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15'
+          }
+        })
+        .then(mediaResponse => {
+          self.logger.info('Fetched media playlist from: ' + mediaPlaylistUrl);
+          return self.parseM3u8Playlist(mediaResponse.data);
+        });
+      } else {
+        throw new Error('No stream variants found in master playlist');
+      }
+    } else {
+      // This is already a media playlist
+      self.logger.info('Detected media playlist, parsing directly');
+      return self.parseM3u8Playlist(response.data);
+    }
+  })
+  .catch(error => {
+    self.logger.error('Failed to fetch M3U8 playlist: ' + error.message);
+    throw error;
+  });
+};
+
+ControllerPlanetRockRadio.prototype.fetchMetadataFromUrl = function(metadataUrl) {
+  var self = this;
+  return axios.get(metadataUrl)
+    .then(response => {
+      self.logger.info('Fetched metadata from: ' + metadataUrl);
+      return response.data;
+    })
+    .catch(error => {
+      self.logger.error('Failed to fetch metadata: ' + error.message);
+      return null;
+    });
+};
+
+ControllerPlanetRockRadio.prototype.streamHlsSegments = function(segments, res) {
+  var self = this;
+  let currentSegmentIndex = 0;
+  let isStreaming = true;
+  let playlistRefreshTimer = null;
+  let currentPlaylistUrl = null;
+  let processedSegmentUrls = new Set(); // Track which segments we've already processed
+  let lastMetadataUrl = null; // Track the last metadata URL to avoid duplicate fetches
+
+  const streamNextSegment = () => {
+    if (!isStreaming) {
+      self.logger.info('HLS streaming stopped');
+      res.end();
+      return;
+    }
+
+    // If we've reached the end of segments, refresh the playlist
+    if (currentSegmentIndex >= segments.length) {
+      self.logger.info('Reached end of segments, refreshing playlist...');
+      self.refreshHlsPlaylist(currentPlaylistUrl, segments, res, (newSegmentsAdded) => {
+        if (newSegmentsAdded > 0) {
+          self.logger.info('Added ' + newSegmentsAdded + ' new segments to playlist');
+        }
+        streamNextSegment();
+      });
+      return;
+    }
+
+    const segment = segments[currentSegmentIndex];
+    self.logger.info('Streaming HLS segment ' + (currentSegmentIndex + 1) + '/' + segments.length + ': ' + segment.segmentUrl);
+
+    // Mark this segment as processed
+    if (segment.segmentUrl) {
+      processedSegmentUrls.add(segment.segmentUrl);
+    }
+
+    // Fetch metadata for this segment only if it's different from the last one
+    if (segment.metadataUrl && 
+        segment.metadataUrl !== 'https://listenapi.planetradio.co.uk/api9.2/eventdata/-1' &&
+        segment.metadataUrl !== lastMetadataUrl) {
+      
+      self.logger.info('Fetching new metadata from: ' + segment.metadataUrl);
+      lastMetadataUrl = segment.metadataUrl;
+      
+      self.fetchMetadataFromUrl(segment.metadataUrl)
+        .then(metadataData => {
+          if (metadataData) {
+            const metadata = self.createMetadataObject(
+              metadataData.eventSongTitle,
+              metadataData.eventSongArtist,
+              '',
+              metadataData.eventImageUrl
+            );
+            self.updateMetadata(metadata);
+          }
+        })
+        .catch(error => {
+          self.logger.error('Failed to fetch segment metadata: ' + error.message);
+        });
+    } else if (segment.metadataUrl === lastMetadataUrl) {
+      self.logger.info('Skipping metadata fetch - same URL as previous segment');
+    }
+
+    // Stream the audio segment
+    axios({
+      method: 'get',
+      url: segment.segmentUrl,
+      responseType: 'stream',
+      headers: {
+        'Accept': '*/*',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15'
+      }
+    })
+    .then(response => {
+      // Pipe the segment to the response
+      response.data.pipe(res, { end: false });
+
+      // Handle segment end - this is more reliable than setTimeout
+      response.data.on('end', () => {
+        self.logger.info('HLS segment ' + (currentSegmentIndex + 1) + ' completed');
+        // Move to next segment with minimal delay to reduce gaps
+        setTimeout(() => {
+          currentSegmentIndex++;
+          streamNextSegment();
+        }, 50); // 50ms delay to ensure smooth transition
+      });
+
+      // Handle segment error
+      response.data.on('error', error => {
+        self.logger.error('HLS segment error: ' + error.message);
+        // Continue with next segment
+        currentSegmentIndex++;
+        streamNextSegment();
+      });
+    })
+    .catch(error => {
+      self.logger.error('Failed to stream HLS segment: ' + error.message);
+      // Continue with next segment
+      currentSegmentIndex++;
+      streamNextSegment();
+    });
+  };
+
+  // Store the playlist URL for refresh
+  currentPlaylistUrl = self.lastStreamUrl;
+
+  // Start streaming segments
+  streamNextSegment();
+
+  // Return cleanup function
+  return () => {
+    isStreaming = false;
+    if (playlistRefreshTimer) {
+      clearTimeout(playlistRefreshTimer);
+    }
+  };
+};
+
+ControllerPlanetRockRadio.prototype.refreshHlsPlaylist = function(playlistUrl, currentSegments, res, continueCallback) {
+  var self = this;
+  
+  // Add authentication parameters to the playlist URL if they're not already present
+  let authenticatedPlaylistUrl = playlistUrl;
+  if (authenticatedPlaylistUrl && !authenticatedPlaylistUrl.includes('listenerid=')) {
+    const currentEpoch = Math.floor(Date.now() / 1000);
+    const authParams = [
+      'direct=false',
+      'listenerid=' + (self.userId || ''),
+      'aw_0_1st.bauer_listenerid=' + (self.userId || ''),
+      'aw_0_1st.playerid=BMUK_inpage_html5',
+      'aw_0_1st.skey=' + currentEpoch,
+      'aw_0_1st.bauer_loggedin=true',
+      'user_id=' + (self.userId || ''),
+      'aw_0_1st.bauer_user_id=' + (self.userId || ''),
+      'region=GB'
+    ].join('&');
+    
+    // Check if URL already has parameters
+    const separator = authenticatedPlaylistUrl.includes('?') ? '&' : '?';
+    authenticatedPlaylistUrl = authenticatedPlaylistUrl + separator + authParams;
+    
+    self.logger.info('Added authentication parameters to playlist refresh URL');
+    self.logger.info('Authenticated playlist URL: ' + authenticatedPlaylistUrl);
+  }
+  
+  self.logger.info('Refreshing HLS playlist: ' + authenticatedPlaylistUrl);
+  
+  self.fetchM3u8Playlist(authenticatedPlaylistUrl)
+    .then(newSegments => {
+      if (newSegments.length === 0) {
+        throw new Error('No segments found in refreshed M3U8 playlist');
+      }
+      
+      self.logger.info('Refreshed playlist has ' + newSegments.length + ' segments');
+      
+      // Find which segments are new (not already in currentSegments)
+      const currentSegmentUrls = new Set(currentSegments.map(seg => seg.segmentUrl));
+      const newSegmentUrls = new Set(newSegments.map(seg => seg.segmentUrl));
+      
+      // Find segments that are in the new playlist but not in the current one
+      const segmentsToAdd = newSegments.filter(segment => !currentSegmentUrls.has(segment.segmentUrl));
+      
+      self.logger.info('Found ' + segmentsToAdd.length + ' new segments to add');
+      
+      // Add only the new segments to the current playlist
+      segmentsToAdd.forEach(segment => currentSegments.push(segment));
+      
+      // Call the callback with the number of new segments added
+      continueCallback(segmentsToAdd.length);
+    })
+    .catch(error => {
+      self.logger.error('Failed to refresh HLS playlist: ' + error.message);
+      // Retry after a short delay
+      setTimeout(() => {
+        self.refreshHlsPlaylist(playlistUrl, currentSegments, res, continueCallback);
+      }, 1000);
+    });
+};
+
+ControllerPlanetRockRadio.prototype.handleDirectStream = function(streamUrl, res) {
+  var self = this;
+  
+  axios({
+    method: 'get',
+    url: streamUrl,
+    responseType: 'stream',
+    headers: {
+      'Accept': '*/*',
+      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15'
+    },
+    httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
+  })
+  .then(response => {
+    // Get cookies from response
+    const cookies = response.headers['set-cookie'];
+    if (cookies) {
+      for (const cookie of cookies) {
+        if (cookie.startsWith('AISSessionId=')) {
+          self.aisSessionId = cookie.split(';')[0];
+          self.logger.info('Captured AISSessionId: ' + self.aisSessionId);
+          // Start metadata connection
+          self.setupEventSource();
+          break;
+        }
+      }
+    }
+
+    // Set appropriate headers
+    res.writeHead(200, {
+      'Content-Type': 'audio/aac',
+      'Transfer-Encoding': 'chunked'
+    });
+
+    // Pipe the stream
+    response.data.pipe(res);
+
+    // Handle stream end
+    response.data.on('end', () => {
+      self.logger.info('Direct stream ended, restarting...');
+      res.end();
+    });
+
+    // Handle stream error
+    response.data.on('error', error => {
+      self.logger.error('Direct stream error: ' + error);
+      res.end();
+    });
+  })
+  .catch(error => {
+    self.logger.error('Direct stream request error: ' + error);
+    res.writeHead(500);
+    res.end();
+  });
+};
+
+ControllerPlanetRockRadio.prototype.handleHlsStream = function(playlistUrl, res) {
+  var self = this;
+  
+  self.logger.info('Starting HLS stream handling for: ' + playlistUrl);
+  
+  // Set appropriate headers for HLS stream with buffering
+  res.writeHead(200, {
+    'Content-Type': 'audio/aac',
+    'Transfer-Encoding': 'chunked',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive'
+  });
+
+  // Fetch and parse the M3U8 playlist
+  self.fetchM3u8Playlist(playlistUrl)
+    .then(segments => {
+      if (segments.length === 0) {
+        throw new Error('No segments found in M3U8 playlist');
+      }
+      
+      self.logger.info('Starting HLS segment streaming with ' + segments.length + ' segments');
+      
+      // Create a mutable segments array for refresh functionality
+      const segmentsArray = [...segments];
+      
+      // Start streaming segments
+      self.hlsCleanupFunction = self.streamHlsSegments(segmentsArray, res);
+    })
+    .catch(error => {
+      self.logger.error('Failed to handle HLS stream: ' + error.message);
+      res.writeHead(500);
+      res.end();
+    });
+}; 
+
+ControllerPlanetRockRadio.prototype.resetStreamingState = function() {
+  var self = this;
+  self.logger.info('Resetting streaming state');
+  
+  // Clear any pending metadata update timer
+  if (self.metadataUpdateTimer) {
+    self.logger.info('Clearing pending metadata update timer');
+    clearTimeout(self.metadataUpdateTimer);
+    self.metadataUpdateTimer = null;
+  }
+
+  // Close EventSource connection
+  if (self.eventSource) {
+    self.logger.info('Closing EventSource connection');
+    self.eventSource.close();
+    self.eventSource = null;
+  }
+
+  // Clean up HLS stream if active
+  if (self.hlsCleanupFunction) {
+    self.logger.info('Cleaning up HLS stream');
+    self.hlsCleanupFunction();
+    self.hlsCleanupFunction = null;
+  }
+
+  // Clear any HLS-related timers
+  if (self.hlsRefreshTimer) {
+    self.logger.info('Clearing HLS refresh timer');
+    clearTimeout(self.hlsRefreshTimer);
+    self.hlsRefreshTimer = null;
+  }
+
+  // Close proxy server
+  if (self.proxyServer) {
+    self.logger.info('Closing proxy server');
+    self.proxyServer.close();
+    self.proxyServer = null;
+    self.proxyPort = null;
+  }
+
+  // Reset all streaming state
+  self.isFirstMetadataUpdate = true;
+  self.currentStationCode = null;
+  self.lastStreamUrl = null;
+  self.aisSessionId = null;
+  self.isHlsStreaming = false;
+  self.currentHlsSegments = null;
+  self.currentHlsSegmentIndex = null;
+  self.lastHlsMetadataUrl = null;
+  self.csrfToken = null;
+  self.sessionCookie = null;
+  self.userId = null;
+
+  // Reset UI state using volatile state workaround
+  self.state.status = 'stop';
+  self.state.albumart = '';
+  self.state.artist = 'Planet Rock';
+  self.state.title = '';
+  
+  // Workaround to allow state to be pushed when not in a volatile state
+  var vState = self.commandRouter.stateMachine.getState();
+  var queueItem = self.commandRouter.stateMachine.playQueue.arrayQueue[vState.position];
+
+  queueItem.name = '';
+  queueItem.artist = 'Planet Rock';
+  queueItem.albumart = '';
+  queueItem.trackType = 'webradio';
+  queueItem.duration = 0;
+  queueItem.samplerate = '-';
+  queueItem.bitrate = '-';
+  queueItem.channels = 2;
+  
+  // Reset volumio internal timer
+  self.commandRouter.stateMachine.currentSeek = 0;
+  self.commandRouter.stateMachine.playbackStart = Date.now();
+  self.commandRouter.stateMachine.currentSongDuration = 0;
+  self.commandRouter.stateMachine.askedForPrefetch = false;
+  self.commandRouter.stateMachine.prefetchDone = false;
+  self.commandRouter.stateMachine.simulateStopStartDone = false;
+
+  // Volumio push state
+  self.commandRouter.servicePushState(self.state, self.serviceName);
+  
+  self.logger.info('Streaming state reset completed');
 }; 

@@ -1,16 +1,16 @@
 {
-    "PLUGIN_NAME": "Planet Rock Radio",
-    "WAIT_FOR_RADIO_CHANNEL": "Waiting for Planet Rock Radio channel...",
-    "STOP_RADIO": "Stopped Planet Rock radio",
-    "ERROR_STREAM_SERVER": "There is a problem with the Planet Rock streaming server.",
+    "PLUGIN_NAME": "Planet Rock Multi Radio",
+    "WAIT_FOR_RADIO_CHANNEL": "Waiting for Planet Rock Multi Radio channel...",
+    "STOP_RADIO": "Stopped Planet Rock Multi Radio",
+    "ERROR_STREAM_SERVER": "There is a problem with the Planet Rock Multi Radio streaming server.",
     "ERROR_AUTH": "Authentication failed",
     "ERROR_AUTH_REQUIRED": "Authentication required",
     "CONFIG": {
-        "TITLE": "Planet Rock Radio Configuration",
+        "TITLE": "Planet Rock Multi Radio Configuration",
         "SETTINGS": "Settings",
-        "SETTINGS_DESCRIPTION": "Configure your Planet Rock Radio settings",
+        "SETTINGS_DESCRIPTION": "Configure your Planet Rock Multi Radio settings",
         "AUTH": "Authentication",
-        "AUTH_DESCRIPTION": "Enter your Planet Rock Radio credentials",
+        "AUTH_DESCRIPTION": "Enter your Planet Rock Multi Radio credentials",
         "USERNAME": "Username",
         "USERNAME_PLACEHOLDER": "Enter your Planet Rock username",
         "PASSWORD": "Password",
@@ -21,6 +21,6 @@
         "METADATA_DELAY": "Metadata Update Delay (seconds)",
         "METADATA_DELAY_PLACEHOLDER": "Enter delay in seconds",
         "ABOUT": "About",
-        "DESCRIPTION": "Planet Rock Radio plugin for Volumio"
+        "DESCRIPTION": "Planet Rock Multi Radio plugin for Volumio"
     }
 }
