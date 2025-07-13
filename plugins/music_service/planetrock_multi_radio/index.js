@@ -7,6 +7,7 @@ var http = require('http');
 var EventSource = require('eventsource');
 var axios = require('axios');
 var net = require('net');
+var AuthManager = require('./AuthManager');
 
 module.exports = ControllerPlanetRadio;
 
@@ -16,12 +17,9 @@ function ControllerPlanetRadio(context) {
   self.context = context;
   self.commandRouter = this.context.coreCommand;
   self.logger = this.context.logger;
-  self.configManager = this.context.configManager;
   self.state = {};
   self.stateMachine = self.commandRouter.stateMachine;
-  self.csrfToken = null;
-  self.sessionCookie = null;
-  self.userId = null; // Will be set from JWT token
+  self.authManager = new AuthManager(self.logger);
   self.aisSessionId = null;
   self.eventSource = null;
   self.proxyServer = null;
@@ -231,8 +229,7 @@ ControllerPlanetRadio.prototype.updateConfig = function(data) {
 
   if (configUpdated) {
     // Clear any existing auth tokens when credentials change
-    self.csrfToken = null;
-    self.sessionCookie = null;
+    self.authManager.clearAuth();
     
     // Save the configuration to file
     self.config.saveFile();
@@ -243,35 +240,7 @@ ControllerPlanetRadio.prototype.updateConfig = function(data) {
   return defer.promise;
 };
 
-ControllerPlanetRadio.prototype.extractJwtPayload = function(cookies) {
-  var self = this;
-  if (!cookies) return null;
 
-  // Find the JWT cookie
-  var jwtCookie = cookies.find(function(cookie) {
-    return cookie.startsWith('jwt-radio-uk-sso-uk_radio=');
-  });
-
-  if (!jwtCookie) return null;
-
-  // Extract the JWT token value
-  var jwtToken = jwtCookie.split('=')[1].split(';')[0];
-
-  try {
-    // JWT tokens are base64url encoded and have three parts separated by dots
-    var parts = jwtToken.split('.');
-    if (parts.length !== 3) {
-      throw new Error('Invalid JWT format');
-    }
-
-    // Decode the payload (second part)
-    var payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
-    return payload;
-  } catch (error) {
-    self.logger.error('Failed to parse JWT token: ' + error.message);
-    return null;
-  }
-};
 
 ControllerPlanetRadio.prototype.authenticate = function() {
   var self = this;
@@ -286,105 +255,10 @@ ControllerPlanetRadio.prototype.authenticate = function() {
     return defer.promise;
   }
 
-  // First get the CSRF token
-  self.logger.info('Making CSRF token request to: https://account.planetradio.co.uk/ajax/process-account/');
-  axios.post('https://account.planetradio.co.uk/ajax/process-account/')
-    .then(response => {
-      self.logger.info('CSRF Response Status: ' + response.status);
-      self.logger.info('CSRF Response Headers: ' + JSON.stringify(response.headers, null, 2));
-      self.logger.info('CSRF Response Body: ' + JSON.stringify(response.data, null, 2));
-
-      // Get CSRF token from header
-      var csrfHeader = response.headers['x-csrf-token'];
-      if (!csrfHeader) {
-        throw new Error('Could not find CSRF token in headers');
-      }
-
-      try {
-        var csrfData = JSON.parse(csrfHeader);
-        if (!csrfData.csrf_name || !csrfData.csrf_value) {
-          throw new Error('Invalid CSRF token format');
-        }
-
-        // Now perform login
-        var loginData = {
-          'processmode': 'login',
-          'emailfield': encodeURIComponent(username).replace(/!/g, '%21').replace(/'/g, '%27').replace(/\(/g, '%28').replace(/\)/g, '%29').replace(/\*/g, '%2A'),
-          'passwordfield': encodeURIComponent(password).replace(/!/g, '%21').replace(/'/g, '%27').replace(/\(/g, '%28').replace(/\)/g, '%29').replace(/\*/g, '%2A'),
-          'authMethod': 'native',
-          'csrf_name': csrfData.csrf_name,
-          'csrf_value': csrfData.csrf_value
-        };
-
-        // Convert to form-urlencoded format
-        var formData = Object.keys(loginData)
-          .map(key => key + '=' + loginData[key])
-          .join('&');
-
-        self.logger.info('Making login request with form data: ' + formData);
-        self.logger.info('Login request headers: ' + JSON.stringify({
-          'Content-Type': 'application/x-www-form-urlencoded',
-          'X-CSRF-Token': csrfHeader,
-          'Cookie': response.headers['set-cookie']
-        }, null, 2));
-
-        // Return both the login request promise and the csrfData
-        return {
-          loginPromise: axios.post('https://account.planetradio.co.uk/ajax/process-account/', formData, {
-            headers: {
-              'Content-Type': 'application/x-www-form-urlencoded',
-              'X-CSRF-Token': csrfHeader,
-              'Cookie': response.headers['set-cookie']
-            }
-          }),
-          csrfData: csrfData
-        };
-      } catch (error) {
-        self.logger.error('Failed to parse CSRF token: ' + error.message);
-        throw error;
-      }
-    })
-    .then(({ loginPromise, csrfData }) => {
-      return loginPromise.then(loginResponse => {
-        self.logger.info('Login Response Status: ' + loginResponse.status);
-        self.logger.info('Login Response Headers: ' + JSON.stringify(loginResponse.headers, null, 2));
-        self.logger.info('Login Response Body: ' + JSON.stringify(loginResponse.data, null, 2));
-
-        if (loginResponse.data && loginResponse.data.status === 601) {
-          self.csrfToken = csrfData.csrf_value;
-          
-          // Find the specific JWT cookie we need
-          var cookies = loginResponse.headers['set-cookie'];
-          var jwtCookie = null;
-          
-          if (Array.isArray(cookies)) {
-            jwtCookie = cookies.find(function(cookie) {
-              return cookie.startsWith('jwt-radio-uk-sso-uk_radio=') && !cookie.includes('deleted');
-            });
-          }
-          
-          if (!jwtCookie) {
-            throw new Error('Could not find valid JWT cookie in response');
-          }
-
-          self.sessionCookie = jwtCookie;
-
-          // Extract user ID from JWT token
-          var jwtPayload = self.extractJwtPayload([jwtCookie]);
-          if (jwtPayload && jwtPayload.id) {
-            self.userId = jwtPayload.id;
-            self.logger.info('Successfully extracted user ID: ' + self.userId);
-            return;
-          } else {
-            throw new Error('Failed to extract user ID from JWT token');
-          }
-        } else {
-          throw new Error('Login failed: ' + JSON.stringify(loginResponse.data));
-        }
-      });
-    })
-    .then(() => {
-      defer.resolve();
+  // Use AuthManager to handle authentication
+  self.authManager.authenticate(username, password)
+    .then(userId => {
+      defer.resolve(userId);
     })
     .catch(error => {
       self.logger.error('Authentication failed: ' + error.message);
@@ -745,20 +619,20 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function(track) {
 
   // First authenticate, then add parameters and start proxy
   self.authenticate()
-    .then(function() {
+    .then(function(userId) {
       // Add authentication parameters after authentication is complete
       let authenticatedStreamUrl = streamUrl;
       if (authenticatedStreamUrl && !authenticatedStreamUrl.includes('listenerid=')) {
         const currentEpoch = Math.floor(Date.now() / 1000);
         const authParams = [
           'direct=false',
-          'listenerid=' + (self.userId || ''),
-          'aw_0_1st.bauer_listenerid=' + (self.userId || ''),
+          'listenerid=' + (userId || ''),
+          'aw_0_1st.bauer_listenerid=' + (userId || ''),
           'aw_0_1st.playerid=BMUK_inpage_html5',
           'aw_0_1st.skey=' + currentEpoch,
           'aw_0_1st.bauer_loggedin=true',
-          'user_id=' + (self.userId || ''),
-          'aw_0_1st.bauer_user_id=' + (self.userId || ''),
+          'user_id=' + (userId || ''),
+          'aw_0_1st.bauer_user_id=' + (userId || ''),
           'region=GB'
         ].join('&');
         
@@ -1243,15 +1117,16 @@ ControllerPlanetRadio.prototype.refreshHlsPlaylist = function(playlistUrl, curre
   let authenticatedPlaylistUrl = playlistUrl;
   if (authenticatedPlaylistUrl && !authenticatedPlaylistUrl.includes('listenerid=')) {
     const currentEpoch = Math.floor(Date.now() / 1000);
+    const userId = self.authManager.getUserId();
     const authParams = [
       'direct=false',
-      'listenerid=' + (self.userId || ''),
-      'aw_0_1st.bauer_listenerid=' + (self.userId || ''),
+      'listenerid=' + (userId || ''),
+      'aw_0_1st.bauer_listenerid=' + (userId || ''),
       'aw_0_1st.playerid=BMUK_inpage_html5',
       'aw_0_1st.skey=' + currentEpoch,
       'aw_0_1st.bauer_loggedin=true',
-      'user_id=' + (self.userId || ''),
-      'aw_0_1st.bauer_user_id=' + (self.userId || ''),
+      'user_id=' + (userId || ''),
+      'aw_0_1st.bauer_user_id=' + (userId || ''),
       'region=GB'
     ].join('&');
     
@@ -1437,9 +1312,7 @@ ControllerPlanetRadio.prototype.resetStreamingState = function() {
   self.currentHlsSegments = null;
   self.currentHlsSegmentIndex = null;
   self.lastHlsMetadataUrl = null;
-  self.csrfToken = null;
-  self.sessionCookie = null;
-  self.userId = null;
+  // Note: AuthManager state is managed separately and should not be cleared here
 
   // Reset UI state using volatile state workaround
   self.state.status = 'stop';
