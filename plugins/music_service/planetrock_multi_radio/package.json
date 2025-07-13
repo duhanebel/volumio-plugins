@@ -1,7 +1,7 @@
 {
-    "name": "planetrock_multi_radio",
+    "name": "planet_radio",
     "version": "1.0.0",
-    "description": "Planet Rock Multi Radio plugin for Volumio",
+    "description": "Planet Radio plugin for Volumio",
     "main": "index.js",
     "scripts": {
         "test": "echo \"Error: no test specified\" && exit 1"

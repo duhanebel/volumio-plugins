@@ -10,7 +10,7 @@
             "icon": "fa-cog",
             "onSave": {
                 "type": "controller",
-                "endpoint": "music_service/planetrock_multi_radio",
+                "endpoint": "music_service/planet_radio",
                 "method": "updateConfig"
             },
             "saveButton": {

@@ -8,9 +8,9 @@ var EventSource = require('eventsource');
 var axios = require('axios');
 var net = require('net');
 
-module.exports = ControllerPlanetRockRadio;
+module.exports = ControllerPlanetRadio;
 
-function ControllerPlanetRockRadio(context) {
+function ControllerPlanetRadio(context) {
   var self = this;
 
   self.context = context;
@@ -32,10 +32,10 @@ function ControllerPlanetRockRadio(context) {
   self.lastStreamUrl = null;
   self.hlsCleanupFunction = null; // For HLS stream cleanup
 
-  self.logger.info("ControllerPlanetRockRadio::constructor");
+  self.logger.info("ControllerPlanetRadio::constructor");
 }
 
-ControllerPlanetRockRadio.prototype.onVolumioStart = function()
+ControllerPlanetRadio.prototype.onVolumioStart = function()
 {
   var self = this;
   self.configFile = this.commandRouter.pluginManager.getConfigurationFile(this.context,'config.json');
@@ -43,19 +43,19 @@ ControllerPlanetRockRadio.prototype.onVolumioStart = function()
   return libQ.resolve();
 };
 
-ControllerPlanetRockRadio.prototype.getConfigurationFiles = function () {
+ControllerPlanetRadio.prototype.getConfigurationFiles = function () {
   return ['config.json'];
 };
 
-ControllerPlanetRockRadio.prototype.onStart = function() {
+ControllerPlanetRadio.prototype.onStart = function() {
   var self = this;
   self.mpdPlugin = this.commandRouter.pluginManager.getPlugin('music_service','mpd');
-  self.serviceName = "planetrock_multi_radio";
+  self.serviceName = "planet_radio";
   self.addToBrowseSources();
   return libQ.resolve();
 };
 
-ControllerPlanetRockRadio.prototype.onStop = function() {
+ControllerPlanetRadio.prototype.onStop = function() {
   var self = this;
   self.logger.info('Plugin stopping - cleaning up all resources');
   
@@ -66,23 +66,23 @@ ControllerPlanetRockRadio.prototype.onStop = function() {
   return libQ.resolve();
 };
 
-ControllerPlanetRockRadio.prototype.onRestart = function() {
+ControllerPlanetRadio.prototype.onRestart = function() {
   var self = this;
   return libQ.resolve();
 };
 
-ControllerPlanetRockRadio.prototype.getConf = function(configFile) {
+ControllerPlanetRadio.prototype.getConf = function(configFile) {
   var self = this;
   self.config = new (require('v-conf'))();
   self.config.loadFile(configFile);
 };
 
-ControllerPlanetRockRadio.prototype.setConf = function(conf) {
+ControllerPlanetRadio.prototype.setConf = function(conf) {
   var self = this;
   self.config.saveFile();
 };
 
-ControllerPlanetRockRadio.prototype.getUIConfig = function() {
+ControllerPlanetRadio.prototype.getUIConfig = function() {
   var self = this;
   var defer = libQ.defer();
   var lang_code = this.commandRouter.sharedVars.get('language_code');
@@ -105,27 +105,27 @@ ControllerPlanetRockRadio.prototype.getUIConfig = function() {
   return defer.promise;
 };
 
-ControllerPlanetRockRadio.prototype.getRadioI18nString = function(key) {
+ControllerPlanetRadio.prototype.getRadioI18nString = function(key) {
   var self = this;
   var lang_code = this.commandRouter.sharedVars.get('language_code');
   var i18n_strings = fs.readJsonSync(__dirname+'/i18n/strings_' + lang_code + '.json');
   return i18n_strings[key];
 };
 
-ControllerPlanetRockRadio.prototype.addToBrowseSources = function () {
+ControllerPlanetRadio.prototype.addToBrowseSources = function () {
   var self = this;
-  self.logger.info('Adding Planet Rock Multi Radio to browse sources');
+  self.logger.info('Adding Planet Radio to browse sources');
   self.commandRouter.volumioAddToBrowseSources({
     name: self.getRadioI18nString('PLUGIN_NAME'),
-    uri: 'planetrock_multi',
+    uri: 'planetradio',
     plugin_type: 'music_service',
-    plugin_name: "planetrock_multi_radio",
-    albumart: '/albumart?sourceicon=music_service/planetrock_multi_radio/assets/planetrock_multi_radio.webp'
+    plugin_name: "planet_radio",
+    albumart: '/albumart?sourceicon=music_service/planet_radio/assets/planet_radio.webp'
   });
-  self.logger.info('Planet Rock Multi Radio added to browse sources');
+  self.logger.info('Planet Radio added to browse sources');
 };
 
-ControllerPlanetRockRadio.prototype.handleBrowseUri = function (curUri) {
+ControllerPlanetRadio.prototype.handleBrowseUri = function (curUri) {
   var self = this;
   var defer = libQ.defer();
   
@@ -167,7 +167,7 @@ ControllerPlanetRockRadio.prototype.handleBrowseUri = function (curUri) {
           uri: 'planetradio/' + stationCode, // Use custom URI for on-demand resolution
           streamUrl: streamUrl, // Store basic stream URL without parameters
           streamType: streamType, // Add stream type
-          albumart: station.stationHeaderLogo || '/albumart?sourceicon=music_service/planetrock_multi_radio/assets/planetrock_multi_radio.webp'
+          albumart: station.stationSquareLogo || '/albumart?sourceicon=music_service/planet_radio/assets/planet_radio.webp'
         };
         defer.resolve({
           navigation: {
@@ -189,14 +189,14 @@ ControllerPlanetRockRadio.prototype.handleBrowseUri = function (curUri) {
     return defer.promise;
   }
 
-  if (curUri.startsWith('planetrock_multi')) {
-    if (curUri === 'planetrock_multi') {
+  if (curUri.startsWith('planetradio')) {
+    if (curUri === 'planetradio') {
       self.getRootContent()
         .then(function(response) {
           defer.resolve(response);
         })
         .fail(function(error) {
-          self.logger.error('ControllerPlanetRockRadio::handleBrowseUri failed: ' + error);
+          self.logger.error('ControllerPlanetRadio::handleBrowseUri failed: ' + error);
           defer.reject(error);
         });
     } else {
@@ -209,7 +209,7 @@ ControllerPlanetRockRadio.prototype.handleBrowseUri = function (curUri) {
   return defer.promise;
 };
 
-ControllerPlanetRockRadio.prototype.updateConfig = function(data) {
+ControllerPlanetRadio.prototype.updateConfig = function(data) {
   var self = this;
   var defer = libQ.defer();
   var configUpdated = false;
@@ -243,7 +243,7 @@ ControllerPlanetRockRadio.prototype.updateConfig = function(data) {
   return defer.promise;
 };
 
-ControllerPlanetRockRadio.prototype.extractJwtPayload = function(cookies) {
+ControllerPlanetRadio.prototype.extractJwtPayload = function(cookies) {
   var self = this;
   if (!cookies) return null;
 
@@ -273,7 +273,7 @@ ControllerPlanetRockRadio.prototype.extractJwtPayload = function(cookies) {
   }
 };
 
-ControllerPlanetRockRadio.prototype.authenticate = function() {
+ControllerPlanetRadio.prototype.authenticate = function() {
   var self = this;
   var defer = libQ.defer();
 
@@ -394,7 +394,7 @@ ControllerPlanetRockRadio.prototype.authenticate = function() {
   return defer.promise;
 };
 
-ControllerPlanetRockRadio.prototype.getRootContent = function() {
+ControllerPlanetRadio.prototype.getRootContent = function() {
   var self = this;
   var defer = libQ.defer();
 
@@ -429,7 +429,7 @@ ControllerPlanetRockRadio.prototype.getRootContent = function() {
           icon: 'fa fa-music',
           uri: uri,
           streamType: 'aac',
-          albumart: station.stationHeaderLogo || '/albumart?sourceicon=music_service/planetrock_multi_radio/assets/planetrock_multi_radio.webp'
+          albumart: station.stationSquareLogo || '/albumart?sourceicon=music_service/planet_radio/assets/planet_radio.webp'
         };
       });
 
@@ -455,7 +455,7 @@ ControllerPlanetRockRadio.prototype.getRootContent = function() {
   return defer.promise;
 };
 
-ControllerPlanetRockRadio.prototype.explodeUri = function(uri) {
+ControllerPlanetRadio.prototype.explodeUri = function(uri) {
   var self = this;
   var defer = libQ.defer();
 
@@ -491,7 +491,7 @@ ControllerPlanetRockRadio.prototype.explodeUri = function(uri) {
           type: 'track',
           title: station.stationName,
           artist: station.stationName,
-          albumart: station.stationHeaderLogo,
+          albumart: station.stationSquareLogo,
           uri: 'planetradio/' + stationCode, // Use custom URI for on-demand resolution
           streamUrl: streamUrl, // Store basic stream URL without parameters
           streamType: streamType, // Add stream type
@@ -505,12 +505,12 @@ ControllerPlanetRockRadio.prototype.explodeUri = function(uri) {
     return defer.promise;
   }
 
-  // fallback for other URIs
+  // fallback for other stationSquareLogo
   defer.resolve([]);
   return defer.promise;
 };
 
-ControllerPlanetRockRadio.prototype.startProxyServer = function(streamUrl, streamType) {
+ControllerPlanetRadio.prototype.startProxyServer = function(streamUrl, streamType) {
   var self = this;
   var defer = libQ.defer();
 
@@ -544,7 +544,7 @@ ControllerPlanetRockRadio.prototype.startProxyServer = function(streamUrl, strea
   return defer.promise;
 };
 
-ControllerPlanetRockRadio.prototype.setupEventSource = function() {
+ControllerPlanetRadio.prototype.setupEventSource = function() {
   var self = this;
   
   if (!self.aisSessionId) {
@@ -631,7 +631,7 @@ ControllerPlanetRockRadio.prototype.setupEventSource = function() {
             })
             .catch(error => {
               self.logger.error('Failed to fetch track data: ' + error.message);
-              const metadata = self.createMetadataObject('Unknown Track', 'Planet Rock', '', '');
+              const metadata = self.createMetadataObject('Unknown Track', 'Planet Radio', '', '');
               self.updateMetadata(metadata);
             });
         }
@@ -643,7 +643,7 @@ ControllerPlanetRockRadio.prototype.setupEventSource = function() {
   };
 };
 
-ControllerPlanetRockRadio.prototype.parseMetadataString = function(metadata) {
+ControllerPlanetRadio.prototype.parseMetadataString = function(metadata) {
   const metadataObj = {};
   metadata.split(',').forEach(pair => {
     const [key, value] = pair.split('=');
@@ -654,17 +654,17 @@ ControllerPlanetRockRadio.prototype.parseMetadataString = function(metadata) {
   return metadataObj;
 };
 
-ControllerPlanetRockRadio.prototype.createMetadataObject = function(title, artist, album, albumart, uri) {
+ControllerPlanetRadio.prototype.createMetadataObject = function(title, artist, album, albumart, uri) {
   return {
     title: title || 'Unknown Track',
-    artist: artist || 'Planet Rock',
+    artist: artist || 'Planet Radio',
     album: album || '',
-    albumart: albumart || '/albumart?sourceicon=music_service/planetrock_multi_radio/assets/planetrock_multi_radio.webp',
+    albumart: albumart || '/albumart?sourceicon=music_service/planet_radio/assets/planet_radio.webp',
     uri: uri || 'http://localhost:' + this.proxyPort + '/stream'
   };
 };
 
-ControllerPlanetRockRadio.prototype.updateMetadata = function(metadata) {
+ControllerPlanetRadio.prototype.updateMetadata = function(metadata) {
   const self = this;
   
   if (self.isFirstMetadataUpdate) {
@@ -688,7 +688,7 @@ ControllerPlanetRockRadio.prototype.updateMetadata = function(metadata) {
   }
 };
 
-ControllerPlanetRockRadio.prototype.fetchShowData = function(stationCode) {
+ControllerPlanetRadio.prototype.fetchShowData = function(stationCode) {
   const self = this;
   const url = `https://listenapi.planetradio.co.uk/api9.2/stations_nowplaying/GB?StationCode%5B%5D=${stationCode}&premium=1`;
   return axios.get(url)
@@ -699,7 +699,7 @@ ControllerPlanetRockRadio.prototype.fetchShowData = function(stationCode) {
         const showData = response.data[0].stationOnAir;
         return self.createMetadataObject(
           showData.episodeTitle,
-          'Planet Rock',
+          'Planet Radio',
           showData.episodeDescription,
           showData.episodeImageUrl
         );
@@ -708,15 +708,15 @@ ControllerPlanetRockRadio.prototype.fetchShowData = function(stationCode) {
     })
     .catch(error => {
       self.logger.error('Failed to fetch show data:', error.message);
-      return self.createMetadataObject('Non stop music', 'Planet Rock', '', '');
+      return self.createMetadataObject('Non stop music', 'Planet Radio', '', '');
     });
 };
 
-ControllerPlanetRockRadio.prototype.clearAddPlayTrack = function(track) {
+ControllerPlanetRadio.prototype.clearAddPlayTrack = function(track) {
   var self = this;
   var defer = libQ.defer();
 
-  self.commandRouter.logger.info("ControllerPlanetRockRadio::clearAddPlayTrack");
+  self.commandRouter.logger.info("ControllerPlanetRadio::clearAddPlayTrack");
 
   // Extract station code from track.uri if possible (e.g., planetradio/[stationCode])
   let stationCode = 'pln'; // default
@@ -805,7 +805,7 @@ ControllerPlanetRockRadio.prototype.clearAddPlayTrack = function(track) {
     });
 };
 
-ControllerPlanetRockRadio.prototype.pushSongState = function(metadata) {
+ControllerPlanetRadio.prototype.pushSongState = function(metadata) {
   var self = this;
   
   self.logger.info('pushSongState called. Fetching MPD status...');
@@ -926,11 +926,11 @@ ControllerPlanetRockRadio.prototype.pushSongState = function(metadata) {
     });
 };
 
-ControllerPlanetRockRadio.prototype.stop = function() {
+ControllerPlanetRadio.prototype.stop = function() {
   var self = this;
   var defer = libQ.defer();
 
-  self.logger.info('Stopping Planet Rock Multi Radio playback');
+  self.logger.info('Stopping Planet Radio playback');
 
   // Stop MPD playback first
   return self.mpdPlugin.sendMpdCommand('stop', [])
@@ -940,7 +940,7 @@ ControllerPlanetRockRadio.prototype.stop = function() {
     .then(function() {
       // Reset all streaming state
       self.resetStreamingState();
-      self.logger.info('Planet Rock Multi Radio playback stopped successfully');
+      self.logger.info('Planet Radio playback stopped successfully');
       return libQ.resolve();
     })
     .fail(function(error) {
@@ -951,7 +951,7 @@ ControllerPlanetRockRadio.prototype.stop = function() {
     });
 };
 
-ControllerPlanetRockRadio.prototype.pause = function() {
+ControllerPlanetRadio.prototype.pause = function() {
   var self = this;
   var defer = libQ.defer();
 
@@ -960,7 +960,7 @@ ControllerPlanetRockRadio.prototype.pause = function() {
   return defer.promise;
 };
 
-ControllerPlanetRockRadio.prototype.resume = function() {
+ControllerPlanetRadio.prototype.resume = function() {
   var self = this;
   var defer = libQ.defer();
 
@@ -969,14 +969,14 @@ ControllerPlanetRockRadio.prototype.resume = function() {
   return defer.promise;
 };
 
-ControllerPlanetRockRadio.prototype.seek = function(position) {
+ControllerPlanetRadio.prototype.seek = function(position) {
   var self = this;
   var defer = libQ.defer();
 
   return defer.promise;
 };
 
-ControllerPlanetRockRadio.prototype.next = function() {
+ControllerPlanetRadio.prototype.next = function() {
   var self = this;
   var defer = libQ.defer();
 
@@ -985,14 +985,14 @@ ControllerPlanetRockRadio.prototype.next = function() {
   return defer.promise;
 };
 
-ControllerPlanetRockRadio.prototype.previous = function() {
+ControllerPlanetRadio.prototype.previous = function() {
   var self = this;
   var defer = libQ.defer();
 
   return defer.promise;
 }; 
 
-ControllerPlanetRockRadio.prototype.detectStreamType = function(streamUrl) {
+ControllerPlanetRadio.prototype.detectStreamType = function(streamUrl) {
   var self = this;
   // Check if the stream URL is an M3U8 playlist
   if (streamUrl && streamUrl.includes('.m3u8')) {
@@ -1002,7 +1002,7 @@ ControllerPlanetRockRadio.prototype.detectStreamType = function(streamUrl) {
   return 'direct_aac';
 };
 
-ControllerPlanetRockRadio.prototype.parseM3u8Playlist = function(playlistContent) {
+ControllerPlanetRadio.prototype.parseM3u8Playlist = function(playlistContent) {
   var self = this;
   const lines = playlistContent.split('\n');
   const segments = [];
@@ -1034,7 +1034,7 @@ ControllerPlanetRockRadio.prototype.parseM3u8Playlist = function(playlistContent
   return segments;
 };
 
-ControllerPlanetRockRadio.prototype.parseMasterPlaylist = function(playlistContent) {
+ControllerPlanetRadio.prototype.parseMasterPlaylist = function(playlistContent) {
   var self = this;
   const lines = playlistContent.split('\n');
   const variants = [];
@@ -1058,7 +1058,7 @@ ControllerPlanetRockRadio.prototype.parseMasterPlaylist = function(playlistConte
   return variants;
 };
 
-ControllerPlanetRockRadio.prototype.fetchM3u8Playlist = function(playlistUrl) {
+ControllerPlanetRadio.prototype.fetchM3u8Playlist = function(playlistUrl) {
   var self = this;
   return axios.get(playlistUrl, {
     headers: {
@@ -1105,7 +1105,7 @@ ControllerPlanetRockRadio.prototype.fetchM3u8Playlist = function(playlistUrl) {
   });
 };
 
-ControllerPlanetRockRadio.prototype.fetchMetadataFromUrl = function(metadataUrl) {
+ControllerPlanetRadio.prototype.fetchMetadataFromUrl = function(metadataUrl) {
   var self = this;
   return axios.get(metadataUrl)
     .then(response => {
@@ -1118,7 +1118,7 @@ ControllerPlanetRockRadio.prototype.fetchMetadataFromUrl = function(metadataUrl)
     });
 };
 
-ControllerPlanetRockRadio.prototype.streamHlsSegments = function(segments, res) {
+ControllerPlanetRadio.prototype.streamHlsSegments = function(segments, res) {
   var self = this;
   let currentSegmentIndex = 0;
   let isStreaming = true;
@@ -1236,7 +1236,7 @@ ControllerPlanetRockRadio.prototype.streamHlsSegments = function(segments, res) 
   };
 };
 
-ControllerPlanetRockRadio.prototype.refreshHlsPlaylist = function(playlistUrl, currentSegments, res, continueCallback) {
+ControllerPlanetRadio.prototype.refreshHlsPlaylist = function(playlistUrl, currentSegments, res, continueCallback) {
   var self = this;
   
   // Add authentication parameters to the playlist URL if they're not already present
@@ -1297,7 +1297,7 @@ ControllerPlanetRockRadio.prototype.refreshHlsPlaylist = function(playlistUrl, c
     });
 };
 
-ControllerPlanetRockRadio.prototype.handleDirectStream = function(streamUrl, res) {
+ControllerPlanetRadio.prototype.handleDirectStream = function(streamUrl, res) {
   var self = this;
   
   axios({
@@ -1353,7 +1353,7 @@ ControllerPlanetRockRadio.prototype.handleDirectStream = function(streamUrl, res
   });
 };
 
-ControllerPlanetRockRadio.prototype.handleHlsStream = function(playlistUrl, res) {
+ControllerPlanetRadio.prototype.handleHlsStream = function(playlistUrl, res) {
   var self = this;
   
   self.logger.info('Starting HLS stream handling for: ' + playlistUrl);
@@ -1388,7 +1388,7 @@ ControllerPlanetRockRadio.prototype.handleHlsStream = function(playlistUrl, res)
     });
 }; 
 
-ControllerPlanetRockRadio.prototype.resetStreamingState = function() {
+ControllerPlanetRadio.prototype.resetStreamingState = function() {
   var self = this;
   self.logger.info('Resetting streaming state');
   
@@ -1444,7 +1444,7 @@ ControllerPlanetRockRadio.prototype.resetStreamingState = function() {
   // Reset UI state using volatile state workaround
   self.state.status = 'stop';
   self.state.albumart = '';
-  self.state.artist = 'Planet Rock';
+        self.state.artist = 'Planet Radio';
   self.state.title = '';
   
   // Workaround to allow state to be pushed when not in a volatile state
@@ -1452,7 +1452,7 @@ ControllerPlanetRockRadio.prototype.resetStreamingState = function() {
   var queueItem = self.commandRouter.stateMachine.playQueue.arrayQueue[vState.position];
 
   queueItem.name = '';
-  queueItem.artist = 'Planet Rock';
+      queueItem.artist = 'Planet Radio';
   queueItem.albumart = '';
   queueItem.trackType = 'webradio';
   queueItem.duration = 0;
