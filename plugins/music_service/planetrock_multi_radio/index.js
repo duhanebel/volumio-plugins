@@ -1,18 +1,16 @@
+/* eslint-disable promise/prefer-await-to-then */
 'use strict';
 
-var libQ = require('kew');
-var fs = require('fs-extra');
-var config = require('v-conf');
-var http = require('http');
-var EventSource = require('eventsource');
-var axios = require('axios');
-var net = require('net');
-var AuthManager = require('./AuthManager');
+const libQ = require('kew');
+const fs = require('fs-extra');
+const AuthManager = require('./src/AuthManager');
+const StationManager = require('./src/StationManager');
+const StreamingProxy = require('./src/StreamingProxy');
 
 module.exports = ControllerPlanetRadio;
 
-function ControllerPlanetRadio(context) {
-  var self = this;
+const ControllerPlanetRadio = function (context) {
+  const self = this;
 
   self.context = context;
   self.commandRouter = this.context.coreCommand;
@@ -20,23 +18,23 @@ function ControllerPlanetRadio(context) {
   self.state = {};
   self.stateMachine = self.commandRouter.stateMachine;
   self.authManager = new AuthManager(self.logger);
-  self.aisSessionId = null;
-  self.eventSource = null;
-  self.proxyServer = null;
-  self.proxyPort = null;
-  self.isFirstMetadataUpdate = true; // Add flag for first update
-  self.metadataUpdateTimer = null; // Add timer reference
+  self.stationManager = new StationManager(self.logger);
+
+  // Streaming proxy will be created based on stream type
+  self.streamingProxy = null;
   self.currentStationCode = 'pln'; // default
   self.lastStreamUrl = null;
-  self.hlsCleanupFunction = null; // For HLS stream cleanup
 
-  self.logger.info("ControllerPlanetRadio::constructor");
-}
+  // Metadata delay handling
+  self.metadataUpdateTimer = null;
+  self.isFirstMetadataUpdate = true;
 
-ControllerPlanetRadio.prototype.onVolumioStart = function()
-{
-  var self = this;
-  self.configFile = this.commandRouter.pluginManager.getConfigurationFile(this.context,'config.json');
+  self.logger.info('ControllerPlanetRadio::constructor');
+};
+
+ControllerPlanetRadio.prototype.onVolumioStart = function () {
+  const self = this;
+  self.configFile = this.commandRouter.pluginManager.getConfigurationFile(this.context, 'config.json');
   self.getConf(self.configFile);
   return libQ.resolve();
 };
@@ -45,127 +43,124 @@ ControllerPlanetRadio.prototype.getConfigurationFiles = function () {
   return ['config.json'];
 };
 
-ControllerPlanetRadio.prototype.onStart = function() {
-  var self = this;
-  self.mpdPlugin = this.commandRouter.pluginManager.getPlugin('music_service','mpd');
-  self.serviceName = "planet_radio";
+ControllerPlanetRadio.prototype.onStart = function () {
+  const self = this;
+  self.mpdPlugin = this.commandRouter.pluginManager.getPlugin('music_service', 'mpd');
+  self.serviceName = 'planet_radio';
+
   self.addToBrowseSources();
   return libQ.resolve();
 };
 
-ControllerPlanetRadio.prototype.onStop = function() {
-  var self = this;
+ControllerPlanetRadio.prototype.onStop = function () {
+  const self = this;
   self.logger.info('Plugin stopping - cleaning up all resources');
-  
-  // Reset all streaming state
-  self.resetStreamingState();
-  
+
+  // Clear metadata timer
+  if (self.metadataUpdateTimer) {
+    clearTimeout(self.metadataUpdateTimer);
+    self.metadataUpdateTimer = null;
+  }
+
+  // Stop the streaming proxy
+  if (self.streamingProxy) {
+    self.streamingProxy.stop();
+  }
+
+  // Reset UI state
+  self.resetUIState();
+
   self.logger.info('Plugin cleanup completed');
   return libQ.resolve();
 };
 
-ControllerPlanetRadio.prototype.onRestart = function() {
-  var self = this;
+ControllerPlanetRadio.prototype.onRestart = function () {
   return libQ.resolve();
 };
 
-ControllerPlanetRadio.prototype.getConf = function(configFile) {
-  var self = this;
+ControllerPlanetRadio.prototype.getConf = function (configFile) {
+  const self = this;
   self.config = new (require('v-conf'))();
   self.config.loadFile(configFile);
 };
 
-ControllerPlanetRadio.prototype.setConf = function(conf) {
-  var self = this;
+ControllerPlanetRadio.prototype.setConf = function (conf) {
+  const self = this;
+
+  // Update configuration with provided values
+  if (conf) {
+    Object.keys(conf).forEach(key => {
+      self.config.set(key, conf[key]);
+    });
+  }
+
   self.config.saveFile();
 };
 
-ControllerPlanetRadio.prototype.getUIConfig = function() {
-  var self = this;
-  var defer = libQ.defer();
-  var lang_code = this.commandRouter.sharedVars.get('language_code');
+ControllerPlanetRadio.prototype.getUIConfig = function () {
+  const self = this;
+  const defer = libQ.defer();
+  const lang_code = this.commandRouter.sharedVars.get('language_code');
 
-  self.commandRouter.i18nJson(__dirname+'/i18n/strings_' + lang_code + '.json',
-      __dirname + '/i18n/strings_en.json',
-      __dirname + '/UIConfig.json')
-  .then(function(uiconf)
-  {
-    uiconf.sections[0].content[0].value = self.config.get('username');
-    uiconf.sections[0].content[1].value = self.config.get('password');
-    uiconf.sections[0].content[2].value = self.config.get('metadata_delay', 10);
-    defer.resolve(uiconf);
-  })
-  .fail(function()
-  {
-    defer.reject(new Error());
-  });
+  self.commandRouter
+    .i18nJson(`${__dirname}/i18n/strings_${lang_code}.json`, `${__dirname}/i18n/strings_en.json`, `${__dirname}/UIConfig.json`)
+    .then(function (uiconf) {
+      uiconf.sections[0].content[0].value = self.config.get('username');
+      uiconf.sections[0].content[1].value = self.config.get('password');
+      uiconf.sections[0].content[2].value = self.config.get('metadata_delay', 10);
+      defer.resolve(uiconf);
+    })
+    .fail(function () {
+      defer.reject(new Error());
+    });
 
   return defer.promise;
 };
 
-ControllerPlanetRadio.prototype.getRadioI18nString = function(key) {
-  var self = this;
-  var lang_code = this.commandRouter.sharedVars.get('language_code');
-  var i18n_strings = fs.readJsonSync(__dirname+'/i18n/strings_' + lang_code + '.json');
+ControllerPlanetRadio.prototype.getRadioI18nString = function (key) {
+  const lang_code = this.commandRouter.sharedVars.get('language_code');
+  const i18n_strings = fs.readJsonSync(`${__dirname}/i18n/strings_${lang_code}.json`);
   return i18n_strings[key];
 };
 
 ControllerPlanetRadio.prototype.addToBrowseSources = function () {
-  var self = this;
+  const self = this;
   self.logger.info('Adding Planet Radio to browse sources');
   self.commandRouter.volumioAddToBrowseSources({
     name: self.getRadioI18nString('PLUGIN_NAME'),
     uri: 'planetradio',
     plugin_type: 'music_service',
-    plugin_name: "planet_radio",
-    albumart: '/albumart?sourceicon=music_service/planet_radio/assets/planet_radio.webp'
+    plugin_name: 'planet_radio',
+    albumart: '/albumart?sourceicon=music_service/planet_radio/assets/planet_radio.webp',
   });
   self.logger.info('Planet Radio added to browse sources');
 };
 
 ControllerPlanetRadio.prototype.handleBrowseUri = function (curUri) {
-  var self = this;
-  var defer = libQ.defer();
-  
-  self.logger.info('handleBrowseUri called with URI: ' + curUri);
+  const self = this;
+  const defer = libQ.defer();
+
+  self.logger.info(`handleBrowseUri called with URI: ${curUri}`);
 
   if (curUri.startsWith('planetradio/')) {
     // User selected a related station, fetch its info and resolve stream URL
     const stationCode = curUri.split('/')[1];
-    axios.get('https://listenapi.planetradio.co.uk/api9.2/initweb/' + stationCode)
-      .then(function(response) {
-        const station = response.data;
-        // Find the correct stream
-        let streamUrl = null;
-        if (Array.isArray(station.stationStreams)) {
-          const stream = station.stationStreams.find(s =>
-            s.streamQuality === 'hq' &&
-            s.streamPremium === 'true'
-          );
-          if (stream) {
-            streamUrl = stream.streamUrl;
-          }
-        }
-        if (!streamUrl) {
-          throw new Error('No suitable stream found for station ' + stationCode);
-        }
-        
-        // Detect stream type
-        const streamType = self.detectStreamType(streamUrl);
-        self.logger.info(`[handleBrowseUri] Detected stream type: ${streamType} for station ${stationCode}`);
-        
+
+    // Use StationManager to get station info and create playable item
+    self.stationManager
+      .getStationInfo(stationCode)
+      .then(function (stationInfo) {
         // Return a single playable item
         const item = {
           service: self.serviceName,
           type: 'mywebradio',
-          title: station.stationName,
-          artist: station.stationName,
+          title: stationInfo.name,
+          artist: stationInfo.name,
           album: '',
           icon: 'fa fa-music',
-          uri: 'planetradio/' + stationCode, // Use custom URI for on-demand resolution
-          streamUrl: streamUrl, // Store basic stream URL without parameters
-          streamType: streamType, // Add stream type
-          albumart: station.stationSquareLogo || '/albumart?sourceicon=music_service/planet_radio/assets/planet_radio.webp'
+          uri: `planetradio/${stationCode}`, // Use custom URI for on-demand resolution
+          streamType: 'aac', // Will be resolved in explodeUri
+          albumart: stationInfo.albumart,
         };
         defer.resolve({
           navigation: {
@@ -173,33 +168,28 @@ ControllerPlanetRadio.prototype.handleBrowseUri = function (curUri) {
             lists: [
               {
                 availableListViews: ['list', 'grid'],
-                title: station.stationName,
-                items: [item]
-              }
-            ]
-          }
+                title: stationInfo.name,
+                items: [item],
+              },
+            ],
+          },
         });
       })
-      .catch(function(error) {
-        self.logger.error('Failed to resolve station stream: ' + error);
+      .catch(function (error) {
+        self.logger.error(`Failed to resolve station info: ${error}`);
         defer.reject(error);
       });
     return defer.promise;
-  }
-
-  if (curUri.startsWith('planetradio')) {
-    if (curUri === 'planetradio') {
-      self.getRootContent()
-        .then(function(response) {
-          defer.resolve(response);
-        })
-        .fail(function(error) {
-          self.logger.error('ControllerPlanetRadio::handleBrowseUri failed: ' + error);
-          defer.reject(error);
-        });
-    } else {
-      defer.reject(new Error('Invalid URI'));
-    }
+  } else if (curUri === 'planetradio') {
+    self
+      .getRootContent()
+      .then(function (response) {
+        defer.resolve(response);
+      })
+      .fail(function (error) {
+        self.logger.error(`ControllerPlanetRadio::handleBrowseUri failed: ${error}`);
+        defer.reject(error);
+      });
   } else {
     defer.reject(new Error('Invalid URI'));
   }
@@ -207,10 +197,10 @@ ControllerPlanetRadio.prototype.handleBrowseUri = function (curUri) {
   return defer.promise;
 };
 
-ControllerPlanetRadio.prototype.updateConfig = function(data) {
-  var self = this;
-  var defer = libQ.defer();
-  var configUpdated = false;
+ControllerPlanetRadio.prototype.updateConfig = function (data) {
+  const self = this;
+  const defer = libQ.defer();
+  let configUpdated = false;
 
   if (self.config.get('username') !== data['username']) {
     self.config.set('username', data['username']);
@@ -230,7 +220,7 @@ ControllerPlanetRadio.prototype.updateConfig = function(data) {
   if (configUpdated) {
     // Clear any existing auth tokens when credentials change
     self.authManager.clearAuth();
-    
+
     // Save the configuration to file
     self.config.saveFile();
     self.logger.info('Configuration updated and saved');
@@ -240,15 +230,13 @@ ControllerPlanetRadio.prototype.updateConfig = function(data) {
   return defer.promise;
 };
 
-
-
-ControllerPlanetRadio.prototype.authenticate = function() {
-  var self = this;
-  var defer = libQ.defer();
+ControllerPlanetRadio.prototype.authenticate = function () {
+  const self = this;
+  const defer = libQ.defer();
 
   // Check if we have credentials
-  var username = self.config.get('username');
-  var password = self.config.get('password');
+  const username = self.config.get('username');
+  const password = self.config.get('password');
 
   if (!username || !password) {
     defer.reject(new Error(self.getRadioI18nString('ERROR_AUTH_REQUIRED')));
@@ -256,415 +244,140 @@ ControllerPlanetRadio.prototype.authenticate = function() {
   }
 
   // Use AuthManager to handle authentication
-  self.authManager.authenticate(username, password)
+  self.authManager
+    .authenticate(username, password)
     .then(userId => {
       defer.resolve(userId);
     })
     .catch(error => {
-      self.logger.error('Authentication failed: ' + error.message);
+      self.logger.error(`Authentication failed: ${error.message}`);
       defer.reject(new Error(self.getRadioI18nString('ERROR_AUTH')));
     });
 
   return defer.promise;
 };
 
-ControllerPlanetRadio.prototype.getRootContent = function() {
-  var self = this;
-  var defer = libQ.defer();
+ControllerPlanetRadio.prototype.getRootContent = function () {
+  const self = this;
+  const defer = libQ.defer();
 
-  // Fetch main station info
-  axios.get('https://listenapi.planetradio.co.uk/api9.2/initweb/pln')
-    .then(function(response) {
-      if (!response.data) {
-        throw new Error('No station data in API response');
-      }
-      const mainStation = response.data; // main station is the root object
-      const brandId = mainStation.stationBrandId;
-      const stations = [mainStation];
-      // Add related stations with the same brandId
-      if (Array.isArray(response.data.stationBrandRelated)) {
-        response.data.stationBrandRelated.forEach(station => {
-          if (station.stationBrandId === brandId) {
-            stations.push(station);
-          }
-        });
-      }
-
-      // Build items for Volumio UI
-      const items = stations.map((station) => {
-        // For all stations, use custom URI for on-demand resolution
-        const uri = 'planetradio/' + station.stationCode;
-        return {
-          service: self.serviceName,
-          type: 'mywebradio',
-          title: station.stationName,
-          artist: station.stationName,
-          album: '',
-          icon: 'fa fa-music',
-          uri: uri,
-          streamType: 'aac',
-          albumart: station.stationSquareLogo || '/albumart?sourceicon=music_service/planet_radio/assets/planet_radio.webp'
-        };
-      });
-
-      const responseObj = {
+  // Use StationManager to get stations
+  self.stationManager
+    .getStations()
+    .then(function (stations) {
+      defer.resolve({
         navigation: {
-          prev: { uri: '/' },
+          prev: { uri: 'music' },
           lists: [
             {
               availableListViews: ['list', 'grid'],
-              title: 'Planet Radio',
-              items: items
-            }
-          ]
-        }
-      };
-      defer.resolve(responseObj);
+              title: self.getRadioI18nString('PLUGIN_NAME'),
+              items: stations,
+            },
+          ],
+        },
+      });
     })
-    .catch(function(error) {
-      self.logger.error('Failed to fetch root content: ' + error);
+    .catch(function (error) {
+      self.logger.error(`Failed to get root content: ${error}`);
       defer.reject(error);
     });
 
   return defer.promise;
 };
 
-ControllerPlanetRadio.prototype.explodeUri = function(uri) {
-  var self = this;
-  var defer = libQ.defer();
+ControllerPlanetRadio.prototype.explodeUri = function (uri) {
+  const self = this;
+  const defer = libQ.defer();
+
+  self.logger.info(`explodeUri called with URI: ${uri}`);
 
   if (uri.startsWith('planetradio/')) {
     const stationCode = uri.split('/')[1];
-    self.logger.info(`[explodeUri] Resolving stream for stationCode: ${stationCode}`);
-    axios.get('https://listenapi.planetradio.co.uk/api9.2/initweb/' + stationCode)
-      .then(function(response) {
-        const station = response.data;
-        let streamUrl = null;
-        if (Array.isArray(station.stationStreams)) {
-          self.logger.info(`[explodeUri] stationStreams for ${stationCode}: ` + JSON.stringify(station.stationStreams, null, 2));
-          const stream = station.stationStreams.find(s =>
-            s.streamQuality === 'hq' &&
-            s.streamPremium === true
-          );
-          self.logger.info(`[explodeUri] Stream search result for ${stationCode}: ` + JSON.stringify(stream, null, 2));
-          if (stream) {
-            streamUrl = stream.streamUrl;
-          }
-        }
-        if (!streamUrl) {
-          self.logger.error(`[explodeUri] No suitable stream found for station ${stationCode}`);
-          throw new Error('No suitable stream found for station ' + stationCode);
-        }
-        
-        // Detect stream type
-        const streamType = self.detectStreamType(streamUrl);
-        self.logger.info(`[explodeUri] Detected stream type: ${streamType} for station ${stationCode}`);
 
-        defer.resolve([{
+    // Use StationManager to get station info
+    self.stationManager
+      .getStationInfo(stationCode)
+      .then(function (stationInfo) {
+        const track = {
+          uri,
           service: self.serviceName,
-          type: 'track',
-          title: station.stationName,
-          artist: station.stationName,
-          albumart: station.stationSquareLogo,
-          uri: 'planetradio/' + stationCode, // Use custom URI for on-demand resolution
-          streamUrl: streamUrl, // Store basic stream URL without parameters
-          streamType: streamType, // Add stream type
-          trackType: 'webradio'
-        }]);
+          type: 'webradio',
+          trackType: 'webradio',
+          title: stationInfo.name,
+          artist: stationInfo.name,
+          albumart: stationInfo.albumart,
+          duration: 0,
+        };
+
+        defer.resolve(track);
       })
-      .catch(function(error) {
-        self.logger.error('[explodeUri] Failed to resolve station stream in explodeUri: ' + error);
+      .catch(function (error) {
+        self.logger.error(`Failed to explode URI: ${error}`);
         defer.reject(error);
       });
-    return defer.promise;
-  }
-
-  // fallback for other stationSquareLogo
-  defer.resolve([]);
-  return defer.promise;
-};
-
-ControllerPlanetRadio.prototype.startProxyServer = function(streamUrl, streamType) {
-  var self = this;
-  var defer = libQ.defer();
-
-  // Find an available port
-  var server = net.createServer();
-  server.listen(0, function() {
-    self.proxyPort = server.address().port;
-    server.close();
-    
-    // Create the proxy server
-    self.proxyServer = http.createServer(function(req, res) {
-      if (req.url === '/stream') {
-        self.logger.info('Proxying stream request to: ' + streamUrl + ' (type: ' + streamType + ')');
-
-        if (streamType === 'hls_m3u8') {
-          // Handle HLS/M3U8 streams
-          self.handleHlsStream(streamUrl, res);
-        } else {
-          // Handle direct AAC streams (existing logic)
-          self.handleDirectStream(streamUrl, res);
-        }
-      }
-    });
-
-    self.proxyServer.listen(self.proxyPort, function() {
-      self.logger.info('Proxy server listening on port ' + self.proxyPort);
-      defer.resolve();
-    });
-  });
-
-  return defer.promise;
-};
-
-ControllerPlanetRadio.prototype.setupEventSource = function() {
-  var self = this;
-  
-  if (!self.aisSessionId) {
-    self.logger.error('No AISSessionId available for EventSource connection');
-    return;
-  }
-
-  const url = 'https://stream-mz.hellorayo.co.uk/metadata?type=json';
-  self.logger.info('Connecting to EventSource URL: ' + url);
-  
-  const options = {
-    headers: {
-      'Cookie': self.aisSessionId,
-      'Accept': 'text/event-stream',
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15'
-    },
-    rejectUnauthorized: false
-  };
-
-  // Close existing EventSource if any
-  if (self.eventSource) {
-    self.logger.info('Closing existing EventSource connection');
-    self.eventSource.close();
-  }
-
-  // Create new EventSource connection
-  self.eventSource = new EventSource(url, options);
-
-  self.eventSource.onopen = function() {
-    self.logger.info('EventSource connection established');
-  };
-
-  self.eventSource.onerror = function(error) {
-    const timestamp = new Date().toISOString();
-    self.logger.error(`[${timestamp}] EventSource error details:`);
-    self.logger.error(`[${timestamp}] - Error object:`, JSON.stringify(error, null, 2));
-    self.logger.error(`[${timestamp}] - ReadyState:`, self.eventSource.readyState);
-    self.logger.error(`[${timestamp}] - URL:`, url);
-    self.logger.error(`[${timestamp}] - Headers:`, JSON.stringify(options.headers, null, 2));
-    
-    if (self.eventSource.readyState === EventSource.CLOSED) {
-      self.logger.info(`[${timestamp}] Connection closed, attempting to reconnect in 1 second...`);
-      setTimeout(() => self.setupEventSource(), 1000);
-    }
-  };
-
-  self.eventSource.onmessage = function(event) {
-    try {
-      self.logger.info('Received raw EventSource message: ' + event.data);
-      
-      const messageData = JSON.parse(event.data);
-      self.logger.info('Parsed EventSource message: ' + JSON.stringify(messageData, null, 2));
-      
-      if (messageData['metadata-list'] && messageData['metadata-list'].length > 0) {
-        const metadata = messageData['metadata-list'][0].metadata;
-        self.logger.info('Extracted metadata string: ' + metadata);
-        
-        const metadataObj = self.parseMetadataString(metadata);
-        self.logger.info('Parsed metadata object: ' + JSON.stringify(metadataObj, null, 2));
-        
-        if (metadataObj.url) {
-          if (metadataObj.url.endsWith('/eventdata/-1')) {
-            self.logger.info('Received -1 event data URL, fetching show information');
-            self.fetchShowData(self.currentStationCode)
-              .then(metadata => self.updateMetadata(metadata));
-            return;
-          }
-
-          // Fetch track data from the API
-          axios.get(metadataObj.url)
-            .then(response => {
-              self.logger.info('Track data response: ' + JSON.stringify(response.data, null, 2));
-              
-              if (response.data) {
-                const trackData = response.data;
-                const metadata = self.createMetadataObject(
-                  trackData.eventSongTitle,
-                  trackData.eventSongArtist,
-                  '',
-                  trackData.eventImageUrl
-                );
-                self.updateMetadata(metadata);
-              }
-            })
-            .catch(error => {
-              self.logger.error('Failed to fetch track data: ' + error.message);
-              const metadata = self.createMetadataObject('Unknown Track', 'Planet Radio', '', '');
-              self.updateMetadata(metadata);
-            });
-        }
-      }
-    } catch (error) {
-      self.logger.error('Failed to parse EventSource message: ' + error.message);
-      self.logger.error('Raw message data: ' + event.data);
-    }
-  };
-};
-
-ControllerPlanetRadio.prototype.parseMetadataString = function(metadata) {
-  const metadataObj = {};
-  metadata.split(',').forEach(pair => {
-    const [key, value] = pair.split('=');
-    if (key && value) {
-      metadataObj[key] = value.replace(/^"|"$/g, '');
-    }
-  });
-  return metadataObj;
-};
-
-ControllerPlanetRadio.prototype.createMetadataObject = function(title, artist, album, albumart, uri) {
-  return {
-    title: title || 'Unknown Track',
-    artist: artist || 'Planet Radio',
-    album: album || '',
-    albumart: albumart || '/albumart?sourceicon=music_service/planet_radio/assets/planet_radio.webp',
-    uri: uri || 'http://localhost:' + this.proxyPort + '/stream'
-  };
-};
-
-ControllerPlanetRadio.prototype.updateMetadata = function(metadata) {
-  const self = this;
-  
-  if (self.isFirstMetadataUpdate) {
-    self.logger.info('First metadata update, applying immediately');
-    self.pushSongState(metadata);
-    self.isFirstMetadataUpdate = false;
   } else {
-    // Clear any existing timer
-    if (self.metadataUpdateTimer) {
-      self.logger.info('Clearing existing metadata update timer');
-      clearTimeout(self.metadataUpdateTimer);
-    }
-    
-    const delay = parseInt(self.config.get('metadata_delay')) * 1000;
-    self.logger.info(`Delaying metadata update by ${delay/1000} seconds...`);
-    self.metadataUpdateTimer = setTimeout(() => {
-      self.logger.info('Updating metadata after delay:', JSON.stringify(metadata, null, 2));
-      self.pushSongState(metadata);
-      self.metadataUpdateTimer = null;
-    }, delay);
+    defer.reject(new Error('Invalid URI format'));
   }
+
+  return defer.promise;
 };
 
-ControllerPlanetRadio.prototype.fetchShowData = function(stationCode) {
+ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
   const self = this;
-  const url = `https://listenapi.planetradio.co.uk/api9.2/stations_nowplaying/GB?StationCode%5B%5D=${stationCode}&premium=1`;
-  return axios.get(url)
-    .then(response => {
-      self.logger.info('Show data response:', JSON.stringify(response.data, null, 2));
-      
-      if (response.data && response.data[0] && response.data[0].stationOnAir) {
-        const showData = response.data[0].stationOnAir;
-        return self.createMetadataObject(
-          showData.episodeTitle,
-          'Planet Radio',
-          showData.episodeDescription,
-          showData.episodeImageUrl
-        );
-      }
-      throw new Error('No show data available');
-    })
-    .catch(error => {
-      self.logger.error('Failed to fetch show data:', error.message);
-      return self.createMetadataObject('Non stop music', 'Planet Radio', '', '');
-    });
-};
 
-ControllerPlanetRadio.prototype.clearAddPlayTrack = function(track) {
-  var self = this;
-  var defer = libQ.defer();
+  self.commandRouter.logger.info('ControllerPlanetRadio::clearAddPlayTrack');
 
-  self.commandRouter.logger.info("ControllerPlanetRadio::clearAddPlayTrack");
-
-  // Extract station code from track.uri if possible (e.g., planetradio/[stationCode])
-  let stationCode = 'pln'; // default
-  if (track && track.uri && track.uri.startsWith('planetradio/')) {
-    stationCode = track.uri.split('/')[1];
-  }
-  self.currentStationCode = stationCode;
-
-  // Always extract the original stream URL (not the proxy URL)
-  let streamUrl = track.streamUrl || track.uri;
-  
-  // Store the base stream URL for later use
-  self.lastStreamUrl = streamUrl;
-
-  // Get stream type from track or detect it
-  const streamType = track.streamType || self.detectStreamType(streamUrl);
-  self.logger.info('Starting playback with stream type: ' + streamType);
-
-  // Always close any existing proxy server and start a new one
-  if (self.proxyServer) {
-    self.logger.info('Closing existing proxy server before starting a new one');
-    self.proxyServer.close();
-    self.proxyServer = null;
-    self.proxyPort = null;
+  // Stop any existing streaming proxy
+  if (self.streamingProxy) {
+    self.streamingProxy.stop();
   }
 
-  // First authenticate, then add parameters and start proxy
-  self.authenticate()
-    .then(function(userId) {
-      // Add authentication parameters after authentication is complete
-      let authenticatedStreamUrl = streamUrl;
-      if (authenticatedStreamUrl && !authenticatedStreamUrl.includes('listenerid=')) {
-        const currentEpoch = Math.floor(Date.now() / 1000);
-        const authParams = [
-          'direct=false',
-          'listenerid=' + (userId || ''),
-          'aw_0_1st.bauer_listenerid=' + (userId || ''),
-          'aw_0_1st.playerid=BMUK_inpage_html5',
-          'aw_0_1st.skey=' + currentEpoch,
-          'aw_0_1st.bauer_loggedin=true',
-          'user_id=' + (userId || ''),
-          'aw_0_1st.bauer_user_id=' + (userId || ''),
-          'region=GB'
-        ].join('&');
-        
-        // Check if URL already has parameters
-        const separator = authenticatedStreamUrl.includes('?') ? '&' : '?';
-        authenticatedStreamUrl = authenticatedStreamUrl + separator + authParams;
-        
-        self.logger.info('Added authentication parameters to stream URL');
-        self.logger.info('Authenticated stream URL: ' + authenticatedStreamUrl);
+  // First authenticate, then get streaming URL with parameters and start proxy
+  self
+    .authenticate()
+    .then(function (userId) {
+      // Extract station code from track.uri if possible (e.g., planetradio/[stationCode])
+      let stationCode = 'pln'; // default
+      if (track && track.uri && track.uri.startsWith('planetradio/')) {
+        stationCode = track.uri.split('/')[1];
       }
-      
-      return self.startProxyServer(authenticatedStreamUrl, streamType);
+      self.currentStationCode = stationCode;
+
+      // Use StationManager to get the authenticated streaming URL
+      return self.stationManager.getStreamingURL(stationCode, userId);
     })
-    .then(function() {
+    .then(function (streamData) {
+      // Store the non-authenticated stream URL for later use
+      self.lastStreamUrl = streamData.streamUrl.toString();
+
+      // Create the appropriate streaming proxy using the factory method
+      self.streamingProxy = StreamingProxy.createProxy(streamData.authenticatedStreamUrl, self.logger, self.addAuthParamsToStreamURL.bind(self));
+
+      // Set up metadata callback for the streaming proxy
+      self.streamingProxy.setMetadataCallback(function (metadata) {
+        self.pushSongState(metadata);
+      });
+
+      return self.streamingProxy.startProxyServer(streamData.authenticatedStreamUrl, self.currentStationCode);
+    })
+    .then(function () {
       // Update track URI to use local proxy
-      track.uri = 'http://localhost:' + self.proxyPort + '/stream';
-      
+      track.uri = self.streamingProxy.getLocalStreamUrl();
+
       return self.mpdPlugin.sendMpdCommand('stop', []);
     })
     .then(function () {
       return self.mpdPlugin.sendMpdCommand('clear', []);
     })
     .then(function () {
-      return self.mpdPlugin.sendMpdCommand('add "' + track.uri + '"', []);
+      return self.mpdPlugin.sendMpdCommand(`add "${track.uri}"`, []);
     })
     .then(function () {
       return self.mpdPlugin.sendMpdCommand('consume 1', []);
     })
     .then(function () {
-      self.commandRouter.pushToastMessage('info',
-        self.getRadioI18nString('PLUGIN_NAME'),
-        self.getRadioI18nString('WAIT_FOR_RADIO_CHANNEL'));
+      self.commandRouter.pushToastMessage('info', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('WAIT_FOR_RADIO_CHANNEL'));
 
       return self.mpdPlugin.sendMpdCommand('play', []);
     })
@@ -674,81 +387,99 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function(track) {
       return libQ.resolve();
     })
     .fail(function (e) {
-      self.logger.error('Failed to start playback: ' + e);
+      self.logger.error(`Failed to start playback: ${e}`);
       return libQ.reject(new Error(self.getRadioI18nString('ERROR_AUTH')));
     });
 };
 
-ControllerPlanetRadio.prototype.pushSongState = function(metadata) {
-  var self = this;
-  
-  self.logger.info('pushSongState called. Fetching MPD status...');
+ControllerPlanetRadio.prototype.pushSongState = function (metadata) {
+  const self = this;
+
+  // Clear existing timer
+  if (self.metadataUpdateTimer) {
+    clearTimeout(self.metadataUpdateTimer);
+  }
+
+  // Get metadata delay from config
+  const metadataDelay = self.config.get('metadata_delay', 10);
+
+  // Set delay for metadata update
+  self.metadataUpdateTimer = setTimeout(() => {
+    self.logger.info('pushSongState called. Fetching MPD status...');
+    self.pushSongStateImmediate(metadata);
+  }, metadataDelay * 1000);
+};
+
+ControllerPlanetRadio.prototype.pushSongStateImmediate = function (metadata) {
+  const self = this;
+
+  const planetRockState = {
+    status: 'play',
+    service: self.serviceName,
+    type: 'webradio',
+    trackType: 'webradio',
+    radioType: 'planetrock',
+    albumart: metadata.albumart,
+    uri: metadata.uri,
+    name: metadata.title,
+    title: metadata.title,
+    artist: metadata.artist,
+    duration: 0,
+    streaming: true,
+    disableUiControls: true,
+    seek: false,
+    pause: false,
+    stop: true,
+    samplerate: '-',
+    bitrate: '-',
+    channels: 2,
+  };
+
   // Get MPD status to get actual audio format
-  self.mpdPlugin.sendMpdCommand('status', [])
+  self.mpdPlugin
+    .sendMpdCommand('status', [])
     .then(function (status) {
       self.logger.info('MPD status command returned. Response received:');
       self.logger.info('----------------- MPD STATUS START -----------------');
-      self.logger.info('Type of status response: ' + typeof status);
-      self.logger.info('Is status response null? ' + (status === null));
-      self.logger.info('Raw status response (stringified): ' + JSON.stringify(status, null, 2));
+      self.logger.info(`Type of status response: ${typeof status}`);
+      self.logger.info(`Is status response null? ${status === null}`);
+      self.logger.info(`Raw status response (stringified): ${JSON.stringify(status, null, 2)}`);
       self.logger.info('------------------ MPD STATUS END ------------------');
-      
+
       if (status) {
         self.logger.info('Parsing MPD status for audio info.');
         // Handle samplerate from 'audio' string (e.g., "44100:f:2")
         if (typeof status.audio === 'string') {
           const audioParts = status.audio.split(':');
           if (audioParts.length > 0 && audioParts[0]) {
-            self.state.samplerate = audioParts[0] + ' Hz';
-            self.logger.info('Parsed samplerate: ' + self.state.samplerate);
+            planetRockState.samplerate = `${audioParts[0]} Hz`;
+            self.logger.info(`Parsed samplerate: ${self.state.samplerate}`);
           } else {
-            self.state.samplerate = '-';
+            planetRockState.samplerate = '-';
           }
         } else {
           self.logger.warn('status.audio is not a string or is missing.');
-          self.state.samplerate = '-';
+          planetRockState.samplerate = '-';
         }
 
         // Handle bitrate
         if (status.bitrate) {
-          self.state.bitrate = status.bitrate + ' kbps';
-          self.logger.info('Parsed bitrate: ' + self.state.bitrate);
+          planetRockState.bitrate = `${status.bitrate} kbps`;
+          self.logger.info(`Parsed bitrate: ${self.state.bitrate}`);
         } else {
-          self.state.bitrate = '-';
+          planetRockState.bitrate = '-';
         }
       } else {
         self.logger.warn('MPD status object is empty or null.');
-        self.state.samplerate = '-';
-        self.state.bitrate = '-';
+        planetRockState.samplerate = '-';
+        planetRockState.bitrate = '-';
       }
-
-      var planetRockState = {
-        status: 'play',
-        service: self.serviceName,
-        type: 'webradio',
-        trackType: 'webradio',
-        radioType: 'planetrock',
-        albumart: metadata.albumart,
-        uri: metadata.uri,
-        name: metadata.title,
-        title: metadata.title,
-        artist: metadata.artist,
-        duration: 0,
-        streaming: true,
-        disableUiControls: true,
-        seek: false,
-        pause: false,
-        stop: true,
-        samplerate: self.state.samplerate || '-',
-        bitrate: self.state.bitrate || '-',
-        channels: 2
-      };
 
       self.state = planetRockState;
 
       // Workaround to allow state to be pushed when not in a volatile state
-      var vState = self.commandRouter.stateMachine.getState();
-      var queueItem = self.commandRouter.stateMachine.playQueue.arrayQueue[vState.position];
+      const vState = self.commandRouter.stateMachine.getState();
+      const queueItem = self.commandRouter.stateMachine.playQueue.arrayQueue[vState.position];
 
       queueItem.name = metadata.title;
       queueItem.artist = metadata.artist;
@@ -758,7 +489,7 @@ ControllerPlanetRadio.prototype.pushSongState = function(metadata) {
       queueItem.samplerate = self.state.samplerate || '-';
       queueItem.bitrate = self.state.bitrate || '-';
       queueItem.channels = 2;
-      
+
       // Reset volumio internal timer
       self.commandRouter.stateMachine.currentSeek = 0;
       self.commandRouter.stateMachine.playbackStart = Date.now();
@@ -770,569 +501,149 @@ ControllerPlanetRadio.prototype.pushSongState = function(metadata) {
       // Volumio push state
       self.commandRouter.servicePushState(planetRockState, self.serviceName);
     })
-    .fail(function(error) {
+    .fail(function (error) {
       self.logger.error('Failed to get MPD status:', error);
       // Still update the state with metadata even if MPD status fails
-      var planetRockState = {
-        status: 'play',
-        service: self.serviceName,
-        type: 'webradio',
-        trackType: 'webradio',
-        radioType: 'planetrock',
-        albumart: metadata.albumart,
-        uri: metadata.uri,
-        name: metadata.title,
-        title: metadata.title,
-        artist: metadata.artist,
-        duration: 0,
-        streaming: true,
-        disableUiControls: true,
-        seek: false,
-        pause: false,
-        stop: true,
-        samplerate: '-',
-        bitrate: '-',
-        channels: 2
-      };
 
       self.state = planetRockState;
+
+      // Workaround to allow state to be pushed when not in a volatile state
+      const vState = self.commandRouter.stateMachine.getState();
+      const queueItem = self.commandRouter.stateMachine.playQueue.arrayQueue[vState.position];
+
+      queueItem.name = metadata.title;
+      queueItem.artist = metadata.artist;
+      queueItem.albumart = metadata.albumart;
+      queueItem.trackType = 'webradio';
+      queueItem.duration = 0;
+      queueItem.samplerate = self.state.samplerate || '-';
+      queueItem.bitrate = self.state.bitrate || '-';
+      queueItem.channels = 2;
+
+      // Reset volumio internal timer
+      self.commandRouter.stateMachine.currentSeek = 0;
+      self.commandRouter.stateMachine.playbackStart = Date.now();
+      self.commandRouter.stateMachine.currentSongDuration = 0;
+      self.commandRouter.stateMachine.askedForPrefetch = false;
+      self.commandRouter.stateMachine.prefetchDone = false;
+      self.commandRouter.stateMachine.simulateStopStartDone = false;
+
       self.commandRouter.servicePushState(planetRockState, self.serviceName);
     });
 };
 
-ControllerPlanetRadio.prototype.stop = function() {
-  var self = this;
-  var defer = libQ.defer();
+ControllerPlanetRadio.prototype.stop = function () {
+  const self = this;
 
   self.logger.info('Stopping Planet Radio playback');
 
   // Stop MPD playback first
-  return self.mpdPlugin.sendMpdCommand('stop', [])
-    .then(function() {
+  return self.mpdPlugin
+    .sendMpdCommand('stop', [])
+    .then(function () {
       return self.mpdPlugin.sendMpdCommand('clear', []);
     })
-    .then(function() {
-      // Reset all streaming state
-      self.resetStreamingState();
+    .then(function () {
+      // Stop the streaming proxy
+      if (self.streamingProxy) {
+        self.streamingProxy.stop();
+      }
+
+      // Reset UI state
+      self.resetUIState();
+
       self.logger.info('Planet Radio playback stopped successfully');
       return libQ.resolve();
     })
-    .fail(function(error) {
-      self.logger.error('Error stopping playback: ' + error);
-      // Even if MPD commands fail, reset streaming state
-      self.resetStreamingState();
+    .fail(function (error) {
+      self.logger.error(`Error stopping playback: ${error}`);
+      // Even if MPD commands fail, stop streaming proxy and reset UI state
+      if (self.streamingProxy) {
+        self.streamingProxy.stop();
+      }
+      self.resetUIState();
       return libQ.resolve();
     });
 };
 
-ControllerPlanetRadio.prototype.pause = function() {
-  var self = this;
-  var defer = libQ.defer();
+ControllerPlanetRadio.prototype.pause = function () {
+  const self = this;
+  const defer = libQ.defer();
 
   self.commandRouter.volumioStop();
 
   return defer.promise;
 };
 
-ControllerPlanetRadio.prototype.resume = function() {
-  var self = this;
-  var defer = libQ.defer();
+ControllerPlanetRadio.prototype.resume = function () {
+  const self = this;
+  const defer = libQ.defer();
 
   self.commandRouter.volumioPlay();
 
   return defer.promise;
 };
 
-ControllerPlanetRadio.prototype.seek = function(position) {
-  var self = this;
-  var defer = libQ.defer();
+ControllerPlanetRadio.prototype.seek = function (_position) {
+  const defer = libQ.defer();
 
   return defer.promise;
 };
 
-ControllerPlanetRadio.prototype.next = function() {
-  var self = this;
-  var defer = libQ.defer();
+ControllerPlanetRadio.prototype.next = function () {
+  const self = this;
+  const defer = libQ.defer();
 
   self.commandRouter.volumioNext();
 
   return defer.promise;
 };
 
-ControllerPlanetRadio.prototype.previous = function() {
-  var self = this;
-  var defer = libQ.defer();
+ControllerPlanetRadio.prototype.previous = function () {
+  const defer = libQ.defer();
 
   return defer.promise;
-}; 
-
-ControllerPlanetRadio.prototype.detectStreamType = function(streamUrl) {
-  var self = this;
-  // Check if the stream URL is an M3U8 playlist
-  if (streamUrl && streamUrl.includes('.m3u8')) {
-    return 'hls_m3u8';
-  }
-  // Default to direct AAC stream
-  return 'direct_aac';
 };
 
-ControllerPlanetRadio.prototype.parseM3u8Playlist = function(playlistContent) {
-  var self = this;
-  const lines = playlistContent.split('\n');
-  const segments = [];
-  let currentSegment = null;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    
-    if (line.startsWith('#EXTINF:')) {
-      // Parse EXTINF line
-      const extinfMatch = line.match(/#EXTINF:([\d.]+),title="([^"]+)",url="([^"]+)"/);
-      if (extinfMatch) {
-        currentSegment = {
-          duration: parseFloat(extinfMatch[1]),
-          title: extinfMatch[2],
-          metadataUrl: extinfMatch[3],
-          segmentUrl: null
-        };
-      }
-    } else if (line && !line.startsWith('#') && currentSegment) {
-      // This is the segment URL
-      currentSegment.segmentUrl = line;
-      segments.push(currentSegment);
-      currentSegment = null;
-    }
-  }
-
-  self.logger.info('Parsed M3U8 playlist with ' + segments.length + ' segments');
-  return segments;
+ControllerPlanetRadio.prototype.addAuthParamsToStreamURL = function (streamUrl) {
+  const self = this;
+  const userId = self.authManager.getUserId();
+  return self.stationManager.addAuthParameters(streamUrl, userId);
 };
 
-ControllerPlanetRadio.prototype.parseMasterPlaylist = function(playlistContent) {
-  var self = this;
-  const lines = playlistContent.split('\n');
-  const variants = [];
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    
-    if (line.startsWith('#EXT-X-STREAM-INF:')) {
-      // This is a stream variant, the next line will be the URL
-      if (i + 1 < lines.length) {
-        const variantUrl = lines[i + 1].trim();
-        if (variantUrl && !variantUrl.startsWith('#')) {
-          variants.push(variantUrl);
-          i++; // Skip the next line since we've processed it
-        }
-      }
-    }
-  }
-
-  self.logger.info('Parsed master M3U8 playlist with ' + variants.length + ' variants');
-  return variants;
-};
-
-ControllerPlanetRadio.prototype.fetchM3u8Playlist = function(playlistUrl) {
-  var self = this;
-  return axios.get(playlistUrl, {
-    headers: {
-      'Accept': 'application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*',
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15'
-    }
-  })
-  .then(response => {
-    self.logger.info('Fetched M3U8 playlist from: ' + playlistUrl);
-    
-    // Check if this is a master playlist (contains stream variants)
-    if (response.data.includes('#EXT-X-STREAM-INF:')) {
-      self.logger.info('Detected master playlist, fetching media playlist');
-      const variants = self.parseMasterPlaylist(response.data);
-      
-      if (variants.length > 0) {
-        // Use the first variant (usually the highest quality)
-        const mediaPlaylistUrl = variants[0];
-        self.logger.info('Fetching media playlist from: ' + mediaPlaylistUrl);
-        
-        // Fetch the media playlist
-        return axios.get(mediaPlaylistUrl, {
-          headers: {
-            'Accept': 'application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*',
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15'
-          }
-        })
-        .then(mediaResponse => {
-          self.logger.info('Fetched media playlist from: ' + mediaPlaylistUrl);
-          return self.parseM3u8Playlist(mediaResponse.data);
-        });
-      } else {
-        throw new Error('No stream variants found in master playlist');
-      }
-    } else {
-      // This is already a media playlist
-      self.logger.info('Detected media playlist, parsing directly');
-      return self.parseM3u8Playlist(response.data);
-    }
-  })
-  .catch(error => {
-    self.logger.error('Failed to fetch M3U8 playlist: ' + error.message);
-    throw error;
-  });
-};
-
-ControllerPlanetRadio.prototype.fetchMetadataFromUrl = function(metadataUrl) {
-  var self = this;
-  return axios.get(metadataUrl)
-    .then(response => {
-      self.logger.info('Fetched metadata from: ' + metadataUrl);
-      return response.data;
-    })
-    .catch(error => {
-      self.logger.error('Failed to fetch metadata: ' + error.message);
-      return null;
-    });
-};
-
-ControllerPlanetRadio.prototype.streamHlsSegments = function(segments, res) {
-  var self = this;
-  let currentSegmentIndex = 0;
-  let isStreaming = true;
-  let playlistRefreshTimer = null;
-  let currentPlaylistUrl = null;
-  let processedSegmentUrls = new Set(); // Track which segments we've already processed
-  let lastMetadataUrl = null; // Track the last metadata URL to avoid duplicate fetches
-
-  const streamNextSegment = () => {
-    if (!isStreaming) {
-      self.logger.info('HLS streaming stopped');
-      res.end();
-      return;
-    }
-
-    // If we've reached the end of segments, refresh the playlist
-    if (currentSegmentIndex >= segments.length) {
-      self.logger.info('Reached end of segments, refreshing playlist...');
-      self.refreshHlsPlaylist(currentPlaylistUrl, segments, res, (newSegmentsAdded) => {
-        if (newSegmentsAdded > 0) {
-          self.logger.info('Added ' + newSegmentsAdded + ' new segments to playlist');
-        }
-        streamNextSegment();
-      });
-      return;
-    }
-
-    const segment = segments[currentSegmentIndex];
-    self.logger.info('Streaming HLS segment ' + (currentSegmentIndex + 1) + '/' + segments.length + ': ' + segment.segmentUrl);
-
-    // Mark this segment as processed
-    if (segment.segmentUrl) {
-      processedSegmentUrls.add(segment.segmentUrl);
-    }
-
-    // Fetch metadata for this segment only if it's different from the last one
-    if (segment.metadataUrl && 
-        segment.metadataUrl !== 'https://listenapi.planetradio.co.uk/api9.2/eventdata/-1' &&
-        segment.metadataUrl !== lastMetadataUrl) {
-      
-      self.logger.info('Fetching new metadata from: ' + segment.metadataUrl);
-      lastMetadataUrl = segment.metadataUrl;
-      
-      self.fetchMetadataFromUrl(segment.metadataUrl)
-        .then(metadataData => {
-          if (metadataData) {
-            const metadata = self.createMetadataObject(
-              metadataData.eventSongTitle,
-              metadataData.eventSongArtist,
-              '',
-              metadataData.eventImageUrl
-            );
-            self.updateMetadata(metadata);
-          }
-        })
-        .catch(error => {
-          self.logger.error('Failed to fetch segment metadata: ' + error.message);
-        });
-    } else if (segment.metadataUrl === lastMetadataUrl) {
-      self.logger.info('Skipping metadata fetch - same URL as previous segment');
-    }
-
-    // Stream the audio segment
-    axios({
-      method: 'get',
-      url: segment.segmentUrl,
-      responseType: 'stream',
-      headers: {
-        'Accept': '*/*',
-        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15'
-      }
-    })
-    .then(response => {
-      // Pipe the segment to the response
-      response.data.pipe(res, { end: false });
-
-      // Handle segment end - this is more reliable than setTimeout
-      response.data.on('end', () => {
-        self.logger.info('HLS segment ' + (currentSegmentIndex + 1) + ' completed');
-        // Move to next segment with minimal delay to reduce gaps
-        setTimeout(() => {
-          currentSegmentIndex++;
-          streamNextSegment();
-        }, 50); // 50ms delay to ensure smooth transition
-      });
-
-      // Handle segment error
-      response.data.on('error', error => {
-        self.logger.error('HLS segment error: ' + error.message);
-        // Continue with next segment
-        currentSegmentIndex++;
-        streamNextSegment();
-      });
-    })
-    .catch(error => {
-      self.logger.error('Failed to stream HLS segment: ' + error.message);
-      // Continue with next segment
-      currentSegmentIndex++;
-      streamNextSegment();
-    });
-  };
-
-  // Store the playlist URL for refresh
-  currentPlaylistUrl = self.lastStreamUrl;
-
-  // Start streaming segments
-  streamNextSegment();
-
-  // Return cleanup function
-  return () => {
-    isStreaming = false;
-    if (playlistRefreshTimer) {
-      clearTimeout(playlistRefreshTimer);
-    }
-  };
-};
-
-ControllerPlanetRadio.prototype.refreshHlsPlaylist = function(playlistUrl, currentSegments, res, continueCallback) {
-  var self = this;
-  
-  // Add authentication parameters to the playlist URL if they're not already present
-  let authenticatedPlaylistUrl = playlistUrl;
-  if (authenticatedPlaylistUrl && !authenticatedPlaylistUrl.includes('listenerid=')) {
-    const currentEpoch = Math.floor(Date.now() / 1000);
-    const userId = self.authManager.getUserId();
-    const authParams = [
-      'direct=false',
-      'listenerid=' + (userId || ''),
-      'aw_0_1st.bauer_listenerid=' + (userId || ''),
-      'aw_0_1st.playerid=BMUK_inpage_html5',
-      'aw_0_1st.skey=' + currentEpoch,
-      'aw_0_1st.bauer_loggedin=true',
-      'user_id=' + (userId || ''),
-      'aw_0_1st.bauer_user_id=' + (userId || ''),
-      'region=GB'
-    ].join('&');
-    
-    // Check if URL already has parameters
-    const separator = authenticatedPlaylistUrl.includes('?') ? '&' : '?';
-    authenticatedPlaylistUrl = authenticatedPlaylistUrl + separator + authParams;
-    
-    self.logger.info('Added authentication parameters to playlist refresh URL');
-    self.logger.info('Authenticated playlist URL: ' + authenticatedPlaylistUrl);
-  }
-  
-  self.logger.info('Refreshing HLS playlist: ' + authenticatedPlaylistUrl);
-  
-  self.fetchM3u8Playlist(authenticatedPlaylistUrl)
-    .then(newSegments => {
-      if (newSegments.length === 0) {
-        throw new Error('No segments found in refreshed M3U8 playlist');
-      }
-      
-      self.logger.info('Refreshed playlist has ' + newSegments.length + ' segments');
-      
-      // Find which segments are new (not already in currentSegments)
-      const currentSegmentUrls = new Set(currentSegments.map(seg => seg.segmentUrl));
-      const newSegmentUrls = new Set(newSegments.map(seg => seg.segmentUrl));
-      
-      // Find segments that are in the new playlist but not in the current one
-      const segmentsToAdd = newSegments.filter(segment => !currentSegmentUrls.has(segment.segmentUrl));
-      
-      self.logger.info('Found ' + segmentsToAdd.length + ' new segments to add');
-      
-      // Add only the new segments to the current playlist
-      segmentsToAdd.forEach(segment => currentSegments.push(segment));
-      
-      // Call the callback with the number of new segments added
-      continueCallback(segmentsToAdd.length);
-    })
-    .catch(error => {
-      self.logger.error('Failed to refresh HLS playlist: ' + error.message);
-      // Retry after a short delay
-      setTimeout(() => {
-        self.refreshHlsPlaylist(playlistUrl, currentSegments, res, continueCallback);
-      }, 1000);
-    });
-};
-
-ControllerPlanetRadio.prototype.handleDirectStream = function(streamUrl, res) {
-  var self = this;
-  
-  axios({
-    method: 'get',
-    url: streamUrl,
-    responseType: 'stream',
-    headers: {
-      'Accept': '*/*',
-      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15'
-    },
-    httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false })
-  })
-  .then(response => {
-    // Get cookies from response
-    const cookies = response.headers['set-cookie'];
-    if (cookies) {
-      for (const cookie of cookies) {
-        if (cookie.startsWith('AISSessionId=')) {
-          self.aisSessionId = cookie.split(';')[0];
-          self.logger.info('Captured AISSessionId: ' + self.aisSessionId);
-          // Start metadata connection
-          self.setupEventSource();
-          break;
-        }
-      }
-    }
-
-    // Set appropriate headers
-    res.writeHead(200, {
-      'Content-Type': 'audio/aac',
-      'Transfer-Encoding': 'chunked'
-    });
-
-    // Pipe the stream
-    response.data.pipe(res);
-
-    // Handle stream end
-    response.data.on('end', () => {
-      self.logger.info('Direct stream ended, restarting...');
-      res.end();
-    });
-
-    // Handle stream error
-    response.data.on('error', error => {
-      self.logger.error('Direct stream error: ' + error);
-      res.end();
-    });
-  })
-  .catch(error => {
-    self.logger.error('Direct stream request error: ' + error);
-    res.writeHead(500);
-    res.end();
-  });
-};
-
-ControllerPlanetRadio.prototype.handleHlsStream = function(playlistUrl, res) {
-  var self = this;
-  
-  self.logger.info('Starting HLS stream handling for: ' + playlistUrl);
-  
-  // Set appropriate headers for HLS stream with buffering
-  res.writeHead(200, {
-    'Content-Type': 'audio/aac',
-    'Transfer-Encoding': 'chunked',
-    'Cache-Control': 'no-cache',
-    'Connection': 'keep-alive'
-  });
-
-  // Fetch and parse the M3U8 playlist
-  self.fetchM3u8Playlist(playlistUrl)
-    .then(segments => {
-      if (segments.length === 0) {
-        throw new Error('No segments found in M3U8 playlist');
-      }
-      
-      self.logger.info('Starting HLS segment streaming with ' + segments.length + ' segments');
-      
-      // Create a mutable segments array for refresh functionality
-      const segmentsArray = [...segments];
-      
-      // Start streaming segments
-      self.hlsCleanupFunction = self.streamHlsSegments(segmentsArray, res);
-    })
-    .catch(error => {
-      self.logger.error('Failed to handle HLS stream: ' + error.message);
-      res.writeHead(500);
-      res.end();
-    });
-}; 
-
-ControllerPlanetRadio.prototype.resetStreamingState = function() {
-  var self = this;
-  self.logger.info('Resetting streaming state');
-  
-  // Clear any pending metadata update timer
-  if (self.metadataUpdateTimer) {
-    self.logger.info('Clearing pending metadata update timer');
-    clearTimeout(self.metadataUpdateTimer);
-    self.metadataUpdateTimer = null;
-  }
-
-  // Close EventSource connection
-  if (self.eventSource) {
-    self.logger.info('Closing EventSource connection');
-    self.eventSource.close();
-    self.eventSource = null;
-  }
-
-  // Clean up HLS stream if active
-  if (self.hlsCleanupFunction) {
-    self.logger.info('Cleaning up HLS stream');
-    self.hlsCleanupFunction();
-    self.hlsCleanupFunction = null;
-  }
-
-  // Clear any HLS-related timers
-  if (self.hlsRefreshTimer) {
-    self.logger.info('Clearing HLS refresh timer');
-    clearTimeout(self.hlsRefreshTimer);
-    self.hlsRefreshTimer = null;
-  }
-
-  // Close proxy server
-  if (self.proxyServer) {
-    self.logger.info('Closing proxy server');
-    self.proxyServer.close();
-    self.proxyServer = null;
-    self.proxyPort = null;
-  }
+ControllerPlanetRadio.prototype.resetUIState = function () {
+  const self = this;
+  self.logger.info('Resetting UI state');
 
   // Reset all streaming state
-  self.isFirstMetadataUpdate = true;
   self.currentStationCode = null;
   self.lastStreamUrl = null;
-  self.aisSessionId = null;
-  self.isHlsStreaming = false;
-  self.currentHlsSegments = null;
-  self.currentHlsSegmentIndex = null;
-  self.lastHlsMetadataUrl = null;
-  // Note: AuthManager state is managed separately and should not be cleared here
+
+  // Stop and clear streaming proxy
+  if (self.streamingProxy) {
+    self.streamingProxy.stop();
+    self.streamingProxy = null;
+  }
 
   // Reset UI state using volatile state workaround
   self.state.status = 'stop';
   self.state.albumart = '';
-        self.state.artist = 'Planet Radio';
+  self.state.artist = 'Planet Radio';
   self.state.title = '';
-  
+
   // Workaround to allow state to be pushed when not in a volatile state
-  var vState = self.commandRouter.stateMachine.getState();
-  var queueItem = self.commandRouter.stateMachine.playQueue.arrayQueue[vState.position];
+  const vState = self.commandRouter.stateMachine.getState();
+  const queueItem = self.commandRouter.stateMachine.playQueue.arrayQueue[vState.position];
 
   queueItem.name = '';
-      queueItem.artist = 'Planet Radio';
+  queueItem.artist = 'Planet Radio';
   queueItem.albumart = '';
   queueItem.trackType = 'webradio';
   queueItem.duration = 0;
   queueItem.samplerate = '-';
   queueItem.bitrate = '-';
   queueItem.channels = 2;
-  
+
   // Reset volumio internal timer
   self.commandRouter.stateMachine.currentSeek = 0;
   self.commandRouter.stateMachine.playbackStart = Date.now();
@@ -1343,6 +654,6 @@ ControllerPlanetRadio.prototype.resetStreamingState = function() {
 
   // Volumio push state
   self.commandRouter.servicePushState(self.state, self.serviceName);
-  
-  self.logger.info('Streaming state reset completed');
-}; 
+
+  self.logger.info('UI state reset completed');
+};

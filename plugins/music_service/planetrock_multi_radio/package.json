@@ -1,22 +1,38 @@
 {
-    "name": "planet_radio",
-    "version": "1.0.0",
-    "description": "Planet Radio plugin for Volumio",
-    "main": "index.js",
-    "scripts": {
-        "test": "echo \"Error: no test specified\" && exit 1"
-    },
-    "author": "Fabio Gallonetto",
-    "license": "MIT",
-    "volumio_info": {
-        "plugin_type": "music_service",
-        "boot_priority": 1
-    },
-    "dependencies": {
-        "axios": "^1.9.0",
-        "eventsource": "^2.0.2",
-        "fs-extra": "^0.28.0",
-        "kew": "^0.7.0",
-        "v-conf": "^1.4.2"
-    }
+  "name": "planet_radio",
+  "version": "1.0.0",
+  "description": "Planet Radio plugin for Volumio",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "npm run lint && npm run format:check"
+  },
+  "author": "Fabio Gallonetto",
+  "license": "MIT",
+  "volumio_info": {
+    "plugin_type": "music_service",
+    "boot_priority": 1
+  },
+  "dependencies": {
+    "axios": "^1.9.0",
+    "eventsource": "^2.0.2",
+    "fs-extra": "^0.28.0",
+    "http-status-codes": "^2.3.0",
+    "kew": "^0.7.0",
+    "v-conf": "^1.4.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.31.0",
+    "@typescript-eslint/eslint-plugin": "^8.37.0",
+    "@typescript-eslint/parser": "^8.37.0",
+    "eslint": "^9.31.0",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-prettier": "^5.5.3",
+    "eslint-plugin-promise": "^7.2.1",
+    "prettier": "^3.6.2"
+  }
 }

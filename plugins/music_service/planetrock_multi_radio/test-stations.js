@@ -28,11 +28,7 @@ async function testStations() {
         // Main station: resolve stream URL
         let streamUrl = null;
         if (Array.isArray(station.stationStreams)) {
-          const stream = station.stationStreams.find(s =>
-            s.streamType === 'adts' &&
-            s.streamQuality === 'hq' &&
-            s.streamPremium === true
-          );
+          const stream = station.stationStreams.find(s => s.streamType === 'adts' && s.streamQuality === 'hq' && s.streamPremium === true);
           if (stream) {
             streamUrl = stream.streamUrl;
           }
@@ -41,13 +37,12 @@ async function testStations() {
           console.log('  [WARN] No suitable stream found for main station');
         } else {
           const currentEpoch = Math.floor(Date.now() / 1000);
-          const finalStreamUrl = streamUrl +
-            '?direct=false' +
+          const finalStreamUrl =
+            `${streamUrl}?direct=false` +
             '&listenerid=TESTUSER' +
             '&aw_0_1st.bauer_listenerid=TESTUSER' +
             '&aw_0_1st.playerid=BMUK_inpage_html5' +
-            '&aw_0_1st.skey=' + currentEpoch +
-            '&aw_0_1st.bauer_loggedin=true' +
+            `&aw_0_1st.skey=${currentEpoch}&aw_0_1st.bauer_loggedin=true` +
             '&user_id=TESTUSER' +
             '&aw_0_1st.bauer_user_id=TESTUSER' +
             '&region=GB';
@@ -55,7 +50,7 @@ async function testStations() {
         }
       } else {
         // Related station: show custom URI
-        console.log('  customUri:', 'planetradio/' + station.stationCode);
+        console.log('  customUri:', `planetradio/${station.stationCode}`);
       }
     });
     console.log('\n--- End of Station List ---');
@@ -64,4 +59,4 @@ async function testStations() {
   }
 }
 
-testStations(); 
+testStations();
