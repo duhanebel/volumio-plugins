@@ -1,10 +1,8 @@
 {
     "PLUGIN_NAME": "Planet Radio",
-    "WAIT_FOR_RADIO_CHANNEL": "Waiting for Planet Radio channel...",
+    "WAIT_FOR_RADIO_CHANNEL": "Streaming is starting...",
     "STOP_RADIO": "Stopped Planet Radio",
-    "ERROR_STREAM_SERVER": "There is a problem with the Planet Radio streaming server.",
     "ERROR_AUTH": "Authentication failed",
-    "ERROR_AUTH_REQUIRED": "Authentication required",
     "ERROR_NO_CREDENTIALS": "Please add credentials in settings",
     "ERROR_INVALID_CREDENTIALS": "Invalid login credentials",
     "ERROR_STREAMING": "Error playing radio stream",
