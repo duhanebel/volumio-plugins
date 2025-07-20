@@ -5,6 +5,9 @@
     "ERROR_STREAM_SERVER": "There is a problem with the Planet Radio streaming server.",
     "ERROR_AUTH": "Authentication failed",
     "ERROR_AUTH_REQUIRED": "Authentication required",
+    "ERROR_NO_CREDENTIALS": "Please add credentials in settings",
+    "ERROR_INVALID_CREDENTIALS": "Invalid login credentials",
+    "ERROR_STREAMING": "Error playing radio stream",
     "CONFIG": {
         "TITLE": "Planet Radio Configuration",
         "SETTINGS": "Settings",

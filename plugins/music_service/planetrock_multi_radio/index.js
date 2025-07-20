@@ -177,6 +177,7 @@ ControllerPlanetRadio.prototype.handleBrowseUri = function (curUri) {
       })
       .catch(function (error) {
         self.logger.error(`Failed to resolve station info: ${error}`);
+        self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_STREAMING'));
         defer.reject(error);
       });
     return defer.promise;
@@ -239,7 +240,8 @@ ControllerPlanetRadio.prototype.authenticate = function () {
   const password = self.config.get('password');
 
   if (!username || !password) {
-    defer.reject(new Error(self.getRadioI18nString('ERROR_AUTH_REQUIRED')));
+    self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_NO_CREDENTIALS'));
+    defer.reject(new Error(self.getRadioI18nString('ERROR_NO_CREDENTIALS')));
     return defer.promise;
   }
 
@@ -251,7 +253,8 @@ ControllerPlanetRadio.prototype.authenticate = function () {
     })
     .catch(error => {
       self.logger.error(`Authentication failed: ${error.message}`);
-      defer.reject(new Error(self.getRadioI18nString('ERROR_AUTH')));
+      self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_INVALID_CREDENTIALS'));
+      defer.reject(new Error(self.getRadioI18nString('ERROR_INVALID_CREDENTIALS')));
     });
 
   return defer.promise;
@@ -280,6 +283,7 @@ ControllerPlanetRadio.prototype.getRootContent = function () {
     })
     .catch(function (error) {
       self.logger.error(`Failed to get root content: ${error}`);
+      self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_STREAMING'));
       defer.reject(error);
     });
 
@@ -314,6 +318,7 @@ ControllerPlanetRadio.prototype.explodeUri = function (uri) {
       })
       .catch(function (error) {
         self.logger.error(`Failed to explode URI: ${error}`);
+        self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_STREAMING'));
         defer.reject(error);
       });
   } else {
@@ -359,6 +364,8 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
         self.pushSongState(metadata);
       });
 
+
+
       return self.streamingProxy.startProxyServer(streamData.authenticatedStreamUrl, self.currentStationCode);
     })
     .then(function () {
@@ -388,7 +395,8 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
     })
     .fail(function (e) {
       self.logger.error(`Failed to start playback: ${e}`);
-      return libQ.reject(new Error(self.getRadioI18nString('ERROR_AUTH')));
+      self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_STREAMING'));
+      return libQ.reject(new Error(self.getRadioI18nString('ERROR_STREAMING')));
     });
 };
 
