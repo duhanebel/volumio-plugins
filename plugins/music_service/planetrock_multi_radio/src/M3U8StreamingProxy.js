@@ -34,14 +34,16 @@ class M3U8StreamingProxy extends StreamingProxy {
     });
 
     try {
+      const authenticatedStreamUrl = self.addAuthParamsToStreamURL(playlistUrl);
       // First, try to resolve master playlist to get the media playlist URL
-      const mediaPlaylistUrl = await self.resolveMasterPlaylist(playlistUrl);
+      const mediaPlaylistUrl = await self.resolveMasterPlaylist(authenticatedStreamUrl);
 
       // Use the resolved media playlist URL or the original URL if not a master playlist
-      const finalPlaylistUrl = mediaPlaylistUrl || playlistUrl;
+      const finalPlaylistUrl = mediaPlaylistUrl || authenticatedStreamUrl;
 
       // Fetch and parse the media playlist
-      const segments = await self.fetchM3u8Playlist(finalPlaylistUrl);
+      const autheticatedFilanPlaylistUrl = self.addAuthParamsToStreamURL(finalPlaylistUrl);
+      const segments = await self.fetchM3u8Playlist(autheticatedFilanPlaylistUrl);
 
       if (segments.length === 0) {
         throw new Error('No segments found in M3U8 playlist');
@@ -125,7 +127,9 @@ class M3U8StreamingProxy extends StreamingProxy {
           const metadata = await self.fetchMetadataFromUrl(segments[0].metadataUrl);
           if (metadata) {
             self.logger.info(`Extracted metadata from M3U8 playlist: ${JSON.stringify(metadata, null, 2)}`);
-            self.updateMetadata(metadata);
+            if(self.onMetadataUpdate) {
+              self.onMetadataUpdate(metadata);
+            }
           }
         } catch (error) {
           self.logger.error(`Failed to fetch metadata from first segment: ${error.message}`);
@@ -274,7 +278,9 @@ class M3U8StreamingProxy extends StreamingProxy {
           const metadata = await self.fetchMetadataFromUrl(segment.metadataUrl);
           if (metadata) {
             self.logger.info(`Updated metadata from segment: ${JSON.stringify(metadata, null, 2)}`);
-            self.updateMetadata(metadata);
+            if(self.onMetadataUpdate) {
+              self.onMetadataUpdate(metadata);
+            }
           }
         } catch (error) {
           self.logger.error(`Failed to fetch metadata from segment: ${error.message}`);

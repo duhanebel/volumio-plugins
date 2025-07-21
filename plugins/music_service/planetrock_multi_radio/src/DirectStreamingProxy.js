@@ -80,8 +80,8 @@ class DirectStreamingProxy extends StreamingProxy {
             // Use the same metadata fetching method as M3U8StreamingProxy
             try {
               const metadata = await self.fetchMetadataFromUrl(metadataObj.url);
-              if (metadata) {
-                self.updateMetadata(metadata);
+              if (metadata && self.onMetadataUpdate) {
+                self.onMetadataUpdate(metadata);
               }
             } catch (error) {
               self.logger.error(`Failed to fetch metadata from EventSource URL: ${error.message}`);
@@ -96,6 +96,22 @@ class DirectStreamingProxy extends StreamingProxy {
   }
 
   /**
+   * Parse metadata string
+   * @param {string} metadata - The metadata string
+   * @returns {Object} - Parsed metadata object
+   */
+  parseMetadataString(metadata) {
+    const metadataObj = {};
+    metadata.split(',').forEach(pair => {
+      const [key, value] = pair.split('=');
+      if (key && value) {
+        metadataObj[key] = value.replace(/^"|"$/g, '');
+      }
+    });
+    return metadataObj;
+  }
+
+  /**
    * Handle direct AAC streams
    * @param {URL} streamUrl - The stream URL object
    * @param {Object} res - HTTP response object
@@ -104,9 +120,10 @@ class DirectStreamingProxy extends StreamingProxy {
     const self = this;
 
     try {
+      const authenticatedStreamUrl = self.addAuthParamsToStreamURL(streamUrl);
       const response = await axios({
         method: 'get',
-        url: streamUrl.toString(),
+        url: authenticatedStreamUrl.toString(),
         responseType: 'stream',
         headers: {
           Accept: '*/*',

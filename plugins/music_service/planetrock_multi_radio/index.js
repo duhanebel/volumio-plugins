@@ -22,8 +22,7 @@ const ControllerPlanetRadio = function (context) {
 
   // Streaming proxy will be created based on stream type
   self.streamingProxy = null;
-  self.currentStationCode = 'pln'; // default
-  self.lastStreamUrl = null;
+  self.currentStationInfo = null; // Will store station info including code, name, albumart
 
   // Metadata delay handling
   self.metadataUpdateTimer = null;
@@ -310,7 +309,7 @@ ControllerPlanetRadio.prototype.explodeUri = function (uri) {
           trackType: 'webradio',
           title: stationInfo.name,
           artist: stationInfo.name,
-          albumart: stationInfo.albumart,
+          albumart: stationInfo.albumart || '/albumart?sourceicon=music_service/planet_radio/assets/planet_radio.webp',
           duration: 0,
         };
 
@@ -341,32 +340,32 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
   // First authenticate, then get streaming URL with parameters and start proxy
   self
     .authenticate()
-    .then(function (userId) {
+    .then(function (_userId) {
+    
       // Extract station code from track.uri if possible (e.g., planetradio/[stationCode])
       let stationCode = 'pln'; // default
       if (track && track.uri && track.uri.startsWith('planetradio/')) {
         stationCode = track.uri.split('/')[1];
       }
-      self.currentStationCode = stationCode;
 
-      // Use StationManager to get the authenticated streaming URL
-      return self.stationManager.getStreamingURL(stationCode, userId);
+      // Get station info and store it
+      return self.stationManager.getStationInfo(stationCode)
+        .then(function (stationInfo) {
+          self.currentStationInfo = stationInfo;
+          return self.stationManager.getStreamingURL(stationCode);
+        });
     })
-    .then(function (streamData) {
-      // Store the non-authenticated stream URL for later use
-      self.lastStreamUrl = streamData.streamUrl.toString();
+    .then(function (streamUrl) {
 
       // Create the appropriate streaming proxy using the factory method
-      self.streamingProxy = StreamingProxy.createProxy(streamData.authenticatedStreamUrl, self.logger, self.addAuthParamsToStreamURL.bind(self));
+      self.streamingProxy = StreamingProxy.createProxy(streamUrl, self.logger, self.addAuthParamsToStreamURL.bind(self));
 
       // Set up metadata callback for the streaming proxy
       self.streamingProxy.setMetadataCallback(function (metadata) {
         self.pushSongState(metadata);
       });
 
-
-
-      return self.streamingProxy.startProxyServer(streamData.authenticatedStreamUrl, self.currentStationCode);
+      return self.streamingProxy.startProxyServer(streamUrl, self.currentStationInfo.code);
     })
     .then(function () {
       // Update track URI to use local proxy
@@ -412,13 +411,17 @@ ControllerPlanetRadio.prototype.pushSongState = function (metadata) {
   const metadataDelay = self.config.get('metadata_delay', 10);
 
   // Set delay for metadata update
-  self.metadataUpdateTimer = setTimeout(() => {
+  self.metadataUpdateTimer = setTimeout(async () => {
     self.logger.info('pushSongState called. Fetching MPD status...');
-    self.pushSongStateImmediate(metadata);
+    try {
+      await self.pushSongStateImmediate(metadata);
+    } catch {
+      // Ignore catch
+    }
   }, metadataDelay * 1000);
 };
 
-ControllerPlanetRadio.prototype.pushSongStateImmediate = function (metadata) {
+ControllerPlanetRadio.prototype.pushSongStateImmediate = async function (metadata) {
   const self = this;
 
   const planetRockState = {
@@ -427,8 +430,7 @@ ControllerPlanetRadio.prototype.pushSongStateImmediate = function (metadata) {
     type: 'webradio',
     trackType: 'webradio',
     radioType: 'planetrock',
-    albumart: metadata.albumart,
-    uri: metadata.uri,
+    albumart: metadata.albumart || '/albumart?sourceicon=music_service/planet_radio/assets/planet_radio.webp',
     name: metadata.title,
     title: metadata.title,
     artist: metadata.artist,
@@ -443,107 +445,39 @@ ControllerPlanetRadio.prototype.pushSongStateImmediate = function (metadata) {
     channels: 2,
   };
 
-  // Get MPD status to get actual audio format
-  self.mpdPlugin
-    .sendMpdCommand('status', [])
-    .then(function (status) {
-      self.logger.info('MPD status command returned. Response received:');
-      self.logger.info('----------------- MPD STATUS START -----------------');
-      self.logger.info(`Type of status response: ${typeof status}`);
-      self.logger.info(`Is status response null? ${status === null}`);
-      self.logger.info(`Raw status response (stringified): ${JSON.stringify(status, null, 2)}`);
-      self.logger.info('------------------ MPD STATUS END ------------------');
+  try {
+    // Get MPD status to get actual audio format
+    const status = await self.mpdPlugin.sendMpdCommand('status', []);
+    self.logger.info(`MPD status command returned. Response received: ${JSON.stringify(status, null, 2)}`);
 
-      if (status) {
-        self.logger.info('Parsing MPD status for audio info.');
-        // Handle samplerate from 'audio' string (e.g., "44100:f:2")
-        if (typeof status.audio === 'string') {
-          const audioParts = status.audio.split(':');
-          if (audioParts.length > 0 && audioParts[0]) {
-            planetRockState.samplerate = `${audioParts[0]} Hz`;
-            self.logger.info(`Parsed samplerate: ${self.state.samplerate}`);
-          } else {
-            planetRockState.samplerate = '-';
-          }
-        } else {
-          self.logger.warn('status.audio is not a string or is missing.');
-          planetRockState.samplerate = '-';
-        }
-
-        // Handle bitrate
-        if (status.bitrate) {
-          planetRockState.bitrate = `${status.bitrate} kbps`;
-          self.logger.info(`Parsed bitrate: ${self.state.bitrate}`);
-        } else {
-          planetRockState.bitrate = '-';
-        }
-      } else {
-        self.logger.warn('MPD status object is empty or null.');
-        planetRockState.samplerate = '-';
-        planetRockState.bitrate = '-';
+    if (status) {
+      self.logger.info('Parsing MPD status for audio info.');
+      // Handle samplerate from 'audio' string (e.g., "44100:f:2")
+      if (typeof status.audio === 'string') {
+        const audioParts = status.audio.split(':');
+        if (audioParts.length > 0 && audioParts[0]) {
+          planetRockState.samplerate = `${audioParts[0]} Hz`;
+          self.logger.info(`Parsed samplerate: ${planetRockState.samplerate}`);
+        } 
       }
 
-      self.state = planetRockState;
+      // Handle bitrate
+      if (status.bitrate) {
+        planetRockState.bitrate = `${status.bitrate} kbps`;
+        self.logger.info(`Parsed bitrate: ${planetRockState.bitrate}`);
+      } 
+    }
+  } catch (error) {
+    self.logger.error('Failed to get MPD status:', error);
+    // Continue with basic metadata even if MPD status fails
+  }
 
-      // Workaround to allow state to be pushed when not in a volatile state
-      const vState = self.commandRouter.stateMachine.getState();
-      const queueItem = self.commandRouter.stateMachine.playQueue.arrayQueue[vState.position];
-
-      queueItem.name = metadata.title;
-      queueItem.artist = metadata.artist;
-      queueItem.albumart = metadata.albumart;
-      queueItem.trackType = 'webradio';
-      queueItem.duration = 0;
-      queueItem.samplerate = self.state.samplerate || '-';
-      queueItem.bitrate = self.state.bitrate || '-';
-      queueItem.channels = 2;
-
-      // Reset volumio internal timer
-      self.commandRouter.stateMachine.currentSeek = 0;
-      self.commandRouter.stateMachine.playbackStart = Date.now();
-      self.commandRouter.stateMachine.currentSongDuration = 0;
-      self.commandRouter.stateMachine.askedForPrefetch = false;
-      self.commandRouter.stateMachine.prefetchDone = false;
-      self.commandRouter.stateMachine.simulateStopStartDone = false;
-
-      // Volumio push state
-      self.commandRouter.servicePushState(planetRockState, self.serviceName);
-    })
-    .fail(function (error) {
-      self.logger.error('Failed to get MPD status:', error);
-      // Still update the state with metadata even if MPD status fails
-
-      self.state = planetRockState;
-
-      // Workaround to allow state to be pushed when not in a volatile state
-      const vState = self.commandRouter.stateMachine.getState();
-      const queueItem = self.commandRouter.stateMachine.playQueue.arrayQueue[vState.position];
-
-      queueItem.name = metadata.title;
-      queueItem.artist = metadata.artist;
-      queueItem.albumart = metadata.albumart;
-      queueItem.trackType = 'webradio';
-      queueItem.duration = 0;
-      queueItem.samplerate = self.state.samplerate || '-';
-      queueItem.bitrate = self.state.bitrate || '-';
-      queueItem.channels = 2;
-
-      // Reset volumio internal timer
-      self.commandRouter.stateMachine.currentSeek = 0;
-      self.commandRouter.stateMachine.playbackStart = Date.now();
-      self.commandRouter.stateMachine.currentSongDuration = 0;
-      self.commandRouter.stateMachine.askedForPrefetch = false;
-      self.commandRouter.stateMachine.prefetchDone = false;
-      self.commandRouter.stateMachine.simulateStopStartDone = false;
-
-      self.commandRouter.servicePushState(planetRockState, self.serviceName);
-    });
+  // Update Volumio state with metadata (with or without MPD audio info)
+  self.updateVolumioState(planetRockState);
 };
 
 ControllerPlanetRadio.prototype.stop = function () {
   const self = this;
-
-  self.logger.info('Stopping Planet Radio playback');
 
   // Stop MPD playback first
   return self.mpdPlugin
@@ -552,25 +486,20 @@ ControllerPlanetRadio.prototype.stop = function () {
       return self.mpdPlugin.sendMpdCommand('clear', []);
     })
     .then(function () {
-      // Stop the streaming proxy
-      if (self.streamingProxy) {
-        self.streamingProxy.stop();
-      }
-
-      // Reset UI state
-      self.resetUIState();
-
-      self.logger.info('Planet Radio playback stopped successfully');
+      self.logger.info('MPD playback stopped successfully');
       return libQ.resolve();
     })
     .fail(function (error) {
-      self.logger.error(`Error stopping playback: ${error}`);
-      // Even if MPD commands fail, stop streaming proxy and reset UI state
+      self.logger.error(`Error stopping MPD playback: ${error}`);
+      return libQ.resolve();
+    })
+    .fin(function () {
+      // Always stop the streaming proxy and reset UI state, regardless of MPD command success/failure
       if (self.streamingProxy) {
         self.streamingProxy.stop();
       }
+      self.updateVolumioState({ status: 'stop' });
       self.resetUIState();
-      return libQ.resolve();
     });
 };
 
@@ -594,22 +523,16 @@ ControllerPlanetRadio.prototype.resume = function () {
 
 ControllerPlanetRadio.prototype.seek = function (_position) {
   const defer = libQ.defer();
-
   return defer.promise;
 };
 
 ControllerPlanetRadio.prototype.next = function () {
-  const self = this;
   const defer = libQ.defer();
-
-  self.commandRouter.volumioNext();
-
   return defer.promise;
 };
 
 ControllerPlanetRadio.prototype.previous = function () {
   const defer = libQ.defer();
-
   return defer.promise;
 };
 
@@ -619,38 +542,29 @@ ControllerPlanetRadio.prototype.addAuthParamsToStreamURL = function (streamUrl) 
   return self.stationManager.addAuthParameters(streamUrl, userId);
 };
 
-ControllerPlanetRadio.prototype.resetUIState = function () {
+/**
+ * Update Volumio state and queue item with the provided state object
+ * @param {Object} stateObject - The state object to apply
+ */
+ControllerPlanetRadio.prototype.updateVolumioState = function (stateObject) {
   const self = this;
-  self.logger.info('Resetting UI state');
 
-  // Reset all streaming state
-  self.currentStationCode = null;
-  self.lastStreamUrl = null;
-
-  // Stop and clear streaming proxy
-  if (self.streamingProxy) {
-    self.streamingProxy.stop();
-    self.streamingProxy = null;
-  }
-
-  // Reset UI state using volatile state workaround
-  self.state.status = 'stop';
-  self.state.albumart = '';
-  self.state.artist = 'Planet Radio';
-  self.state.title = '';
+  // Update self.state with the provided state object
+  self.state = { ...self.state, ...stateObject };
 
   // Workaround to allow state to be pushed when not in a volatile state
   const vState = self.commandRouter.stateMachine.getState();
   const queueItem = self.commandRouter.stateMachine.playQueue.arrayQueue[vState.position];
 
-  queueItem.name = '';
-  queueItem.artist = 'Planet Radio';
-  queueItem.albumart = '';
-  queueItem.trackType = 'webradio';
-  queueItem.duration = 0;
-  queueItem.samplerate = '-';
-  queueItem.bitrate = '-';
-  queueItem.channels = 2;
+  // Update queue item with state properties
+  queueItem.name = self.state.title || '';
+  queueItem.artist = self.state.artist || '';
+  queueItem.albumart = self.state.albumart || '';
+  queueItem.trackType = self.state.trackType || 'webradio';
+  queueItem.duration = self.state.duration || 0;
+  queueItem.samplerate = self.state.samplerate || '-';
+  queueItem.bitrate = self.state.bitrate || '-';
+  queueItem.channels = self.state.channels || 2;
 
   // Reset volumio internal timer
   self.commandRouter.stateMachine.currentSeek = 0;
@@ -662,6 +576,35 @@ ControllerPlanetRadio.prototype.resetUIState = function () {
 
   // Volumio push state
   self.commandRouter.servicePushState(self.state, self.serviceName);
+};
+
+ControllerPlanetRadio.prototype.resetUIState = function () {
+  const self = this;
+  self.logger.info('Resetting UI state');
+
+  // Stop and clear streaming proxy
+  if (self.streamingProxy) {
+    self.streamingProxy.stop();
+    self.streamingProxy = null;
+  }
+
+  // Use stored station info for UI display
+  if (self.currentStationInfo) {
+    // Reset UI state using the centralized update function with stored station info
+    self.updateVolumioState({
+      status: 'stop',
+      albumart: self.currentStationInfo.albumart || '/albumart?sourceicon=music_service/planet_radio/assets/planet_radio.webp',
+      artist: 'Planet Radio',
+      title: self.currentStationInfo.name || 'Planet Rock',
+      trackType: 'webradio',
+      duration: 0,
+      samplerate: '-',
+      bitrate: '-'
+    });
+  } 
+
+  // Reset streaming state after updating UI
+  self.currentStationInfo = null;
 
   self.logger.info('UI state reset completed');
 };

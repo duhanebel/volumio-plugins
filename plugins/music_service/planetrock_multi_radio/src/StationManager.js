@@ -109,13 +109,13 @@ class StationManager {
           type: 'mywebradio',
           title: station.stationName,
           artist: station.stationStrapline,
-          album: '',
+          album: null,
           icon: 'fa fa-music',
           uri,
           streamType: 'aac',
           stationCode: station.stationCode,
           streamUrl, // Will be populated for main station, null for others
-          albumart: station.stationSquareLogo || '/albumart?sourceicon=music_service/planet_radio/assets/planet_radio.webp',
+          albumart: station.stationSquareLogo,
         };
       });
 
@@ -133,10 +133,9 @@ class StationManager {
   /**
    * Get streaming URL for a specific station
    * @param {string} stationCode - The station code (e.g., 'pln', 'kerrang', etc.)
-   * @param {string} userId - User ID for authentication parameters
-   * @returns {Promise<Object>} - Object containing authenticatedStreamUrl and streamUrl (both URL objects)
+   * @returns {Promise<Object>} - streamUrl (URL objects)
    */
-  async getStreamingURL(stationCode, userId) {
+  async getStreamingURL(stationCode) {
     const self = this;
 
     if (!stationCode) {
@@ -147,11 +146,7 @@ class StationManager {
     const cachedStation = self._findCachedStation(stationCode);
     if (cachedStation && cachedStation.streamUrl) {
       self.logger.info(`[getStreamingURL] Returning cached streamUrl for stationCode: ${stationCode}`);
-      const authenticatedStreamUrl = self.addAuthParameters(cachedStation.streamUrl, userId);
-      return {
-        authenticatedStreamUrl,
-        streamUrl: cachedStation.streamUrl,
-      };
+      return cachedStation.streamUrl;
     }
 
     self.logger.info(`[getStreamingURL] Resolving stream for stationCode: ${stationCode}`);
@@ -189,13 +184,7 @@ class StationManager {
         self.logger.info(`[getStreamingURL] Cached streamUrl for stationCode: ${stationCode}`);
       }
 
-      // Add authentication parameters to the stream URL
-      const authenticatedStreamUrl = self.addAuthParameters(streamUrl, userId);
-
-      return {
-        authenticatedStreamUrl,
-        streamUrl: streamUrl.toString(),
-      };
+      return streamUrl;
     } catch (error) {
       self.logger.error(`[getStreamingURL] Failed to resolve station stream: ${error}`);
       throw error;
@@ -234,27 +223,13 @@ class StationManager {
       return {
         name: station.stationName,
         code: stationCode,
-        albumart: station.stationSquareLogo || '/albumart?sourceicon=music_service/planet_radio/assets/planet_radio.webp',
+        stationStrapline: station.stationStrapline,
+        albumart: station.stationSquareLogo ,
       };
     } catch (error) {
       self.logger.error(`[getStationInfo] Failed to fetch station info: ${error}`);
       throw error;
     }
-  }
-
-  /**
-   * Detect the type of stream from the URL
-   * @private
-   * @param {URL} streamUrl - The stream URL object
-   * @returns {string} - Stream type ('hls_m3u8' or 'direct_aac')
-   */
-  _detectStreamType(streamUrl) {
-    // Check if the stream URL is an M3U8 playlist
-    if (streamUrl.pathname.includes('.m3u8')) {
-      return 'hls_m3u8';
-    }
-    // Default to direct AAC stream
-    return 'direct_aac';
   }
 
   /**
@@ -276,13 +251,13 @@ class StationManager {
     const currentEpoch = Math.floor(Date.now() / 1000);
     const authParams = {
       direct: 'false',
-      listenerid: userId || '',
-      'aw_0_1st.bauer_listenerid': userId || '',
+      listenerid: userId,
+      'aw_0_1st.bauer_listenerid': userId,
       'aw_0_1st.playerid': 'BMUK_inpage_html5',
       'aw_0_1st.skey': currentEpoch.toString(),
       'aw_0_1st.bauer_loggedin': 'true',
-      user_id: userId || '',
-      'aw_0_1st.bauer_user_id': userId || '',
+      user_id: userId,
+      'aw_0_1st.bauer_user_id': userId,
       region: 'GB',
     };
 
@@ -300,36 +275,6 @@ class StationManager {
     return url;
   }
 
-  /**
-   * Clear all caches
-   */
-  clearCache() {
-    this.logger.info('Clearing all StationManager caches');
-    this.stationsCache = null;
-  }
-
-  /**
-   * Clear streamUrl cache for a specific station
-   * @param {string} stationCode - The station code to clear cache for
-   */
-  clearStreamUrlCache(stationCode) {
-    if (this.stationsCache) {
-      if (stationCode) {
-        // Clear streamUrl for specific station
-        const cachedStation = this._findCachedStation(stationCode);
-        if (cachedStation) {
-          cachedStation.streamUrl = null;
-          this.logger.info(`Cleared streamUrl cache for station: ${stationCode}`);
-        }
-      } else {
-        // Clear all streamUrl cache
-        this.stationsCache.forEach(station => {
-          station.streamUrl = null;
-        });
-        this.logger.info('Cleared all streamUrl cache');
-      }
-    }
-  }
 }
 
 module.exports = StationManager;
