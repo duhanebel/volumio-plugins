@@ -80,15 +80,8 @@ class DirectStreamingProxy extends StreamingProxy {
           self.logger.info(`Parsed metadata object: ${JSON.stringify(metadataObj, null, 2)}`);
 
           if (metadataObj.url) {
-            // Use the same metadata fetching method as M3U8StreamingProxy
-            try {
-              const metadata = await self.fetchMetadataFromUrl(metadataObj.url);
-              if (metadata && self.onMetadataUpdate) {
-                self.onMetadataUpdate(metadata);
-              }
-            } catch (error) {
-              self.logger.error(`Failed to fetch metadata from EventSource URL: ${error.message}`);
-            }
+            // Use the common metadata fetching method
+            await self.fetchAndUpdateMetadata(metadataObj.url, 'EventSource');
           }
         }
       } catch (error) {
@@ -128,11 +121,7 @@ class DirectStreamingProxy extends StreamingProxy {
         method: 'get',
         url: authenticatedStreamUrl.toString(),
         responseType: 'stream',
-        headers: {
-          Accept: '*/*',
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15',
-        },
-        httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false }),
+        ...self.getCommonRequestOptions(),
       });
 
       // Get cookies from response
@@ -166,13 +155,10 @@ class DirectStreamingProxy extends StreamingProxy {
 
       // Handle stream error
       response.data.on('error', error => {
-        self.logger.error(`Direct stream error: ${error}`);
-        res.end();
+        self.handleStreamError(error, 'Direct stream', res);
       });
     } catch (error) {
-      self.logger.error(`Direct stream request error: ${error}`);
-      res.writeHead(StatusCodes.INTERNAL_SERVER_ERROR);
-      res.end();
+      self.handleStreamError(error, 'Direct stream request', res);
     }
   }
 }

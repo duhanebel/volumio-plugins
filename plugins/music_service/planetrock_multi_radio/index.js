@@ -66,22 +66,51 @@ ControllerPlanetRadio.prototype.onStop = function () {
   const self = this;
   self.logger.info('Plugin stopping - cleaning up all resources');
 
+  // Use centralized cleanup method
+  self._cleanupResources();
+
+  self.logger.info('Plugin cleanup completed');
+  return libQ.resolve();
+};
+
+/**
+ * Centralized cleanup method for all plugin resources
+ * @private
+ */
+ControllerPlanetRadio.prototype._cleanupResources = function () {
+  const self = this;
+  self.logger.info('Starting centralized resource cleanup');
+
   // Clear metadata timer
   if (self.metadataUpdateTimer) {
-    clearTimeout(self.metadataUpdateTimer);
-    self.metadataUpdateTimer = null;
+    try {
+      clearTimeout(self.metadataUpdateTimer);
+    } catch (error) {
+      self.logger.warn('Error clearing metadata timer:', error.message);
+    } finally {
+      self.metadataUpdateTimer = null;
+    }
   }
 
   // Stop the streaming proxy
   if (self.streamingProxy) {
-    self.streamingProxy.stop();
+    try {
+      self.streamingProxy.stop();
+    } catch (error) {
+      self.logger.warn('Error stopping streaming proxy during cleanup:', error.message);
+    } finally {
+      self.streamingProxy = null;
+    }
   }
 
   // Reset UI state
-  self.resetUIState();
+  try {
+    self.resetUIState();
+  } catch (error) {
+    self.logger.warn('Error resetting UI state during cleanup:', error.message);
+  }
 
-  self.logger.info('Plugin cleanup completed');
-  return libQ.resolve();
+  self.logger.info('Centralized resource cleanup completed');
 };
 
 ControllerPlanetRadio.prototype.onRestart = function () {
@@ -121,8 +150,16 @@ ControllerPlanetRadio.prototype.getUIConfig = async function () {
     uiconf.sections[0].content[1].value = self.config.get('password');
     uiconf.sections[0].content[2].value = self.config.get('metadata_delay', DEFAULT_METADATA_DELAY);
     return uiconf;
-  } catch {
-    throw new Error();
+  } catch (error) {
+    const errorMessage = error.message || 'Unknown error occurred';
+    self.logger.error(`Failed to get UI config: ${errorMessage}`);
+
+    // Log additional context for debugging
+    if (error.stack) {
+      self.logger.error('UI config error stack trace:', error.stack);
+    }
+
+    throw new Error('Failed to load UI configuration');
   }
 };
 
@@ -184,7 +221,14 @@ ControllerPlanetRadio.prototype.handleBrowseUri = async function (curUri) {
         },
       };
     } catch (error) {
-      self.logger.error(`Failed to resolve station info: ${error}`);
+      const errorMessage = error.message || 'Unknown error occurred';
+      self.logger.error(`Failed to resolve station info for ${stationCode}: ${errorMessage}`);
+
+      // Log additional context for debugging
+      if (error.stack) {
+        self.logger.error('Error stack trace:', error.stack);
+      }
+
       self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_STREAMING'));
       throw error;
     }
@@ -249,7 +293,14 @@ ControllerPlanetRadio.prototype.authenticate = async function () {
     const userId = await self.authManager.authenticate(username, password);
     return userId;
   } catch (error) {
-    self.logger.error(`Authentication failed: ${error.message}`);
+    const errorMessage = error.message || 'Unknown authentication error';
+    self.logger.error(`Authentication failed: ${errorMessage}`);
+
+    // Log additional context for debugging
+    if (error.stack) {
+      self.logger.error('Authentication error stack trace:', error.stack);
+    }
+
     self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_INVALID_CREDENTIALS'));
     throw new Error(self.getRadioI18nString('ERROR_INVALID_CREDENTIALS'));
   }
@@ -275,7 +326,14 @@ ControllerPlanetRadio.prototype.getRootContent = async function () {
       },
     };
   } catch (error) {
-    self.logger.error(`Failed to get root content: ${error}`);
+    const errorMessage = error.message || 'Unknown error occurred';
+    self.logger.error(`Failed to get root content: ${errorMessage}`);
+
+    // Log additional context for debugging
+    if (error.stack) {
+      self.logger.error('Error stack trace:', error.stack);
+    }
+
     self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_STREAMING'));
     throw error;
   }
@@ -306,7 +364,14 @@ ControllerPlanetRadio.prototype.explodeUri = async function (uri) {
 
       return track;
     } catch (error) {
-      self.logger.error(`Failed to explode URI: ${error}`);
+      const errorMessage = error.message || 'Unknown error occurred';
+      self.logger.error(`Failed to explode URI ${uri}: ${errorMessage}`);
+
+      // Log additional context for debugging
+      if (error.stack) {
+        self.logger.error('Error stack trace:', error.stack);
+      }
+
       self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_STREAMING'));
       throw error;
     }
@@ -365,8 +430,15 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = async function (track) {
     self.state.status = 'play';
     self.commandRouter.servicePushState(self.state, self.serviceName);
     return libQ.resolve();
-  } catch (e) {
-    self.logger.error(`Failed to start playback: ${e}`);
+  } catch (error) {
+    const errorMessage = error.message || 'Unknown error occurred';
+    self.logger.error(`Failed to start playback: ${errorMessage}`);
+
+    // Log additional context for debugging
+    if (error.stack) {
+      self.logger.error('Error stack trace:', error.stack);
+    }
+
     self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_STREAMING'));
     throw new Error(self.getRadioI18nString('ERROR_STREAMING'));
   }
@@ -388,8 +460,9 @@ ControllerPlanetRadio.prototype.pushSongState = function (metadata) {
     self.logger.info('pushSongState called. Fetching MPD status...');
     try {
       await self.pushSongStateImmediate(metadata);
-    } catch {
-      // Ignore catch
+    } catch (error) {
+      self.logger.warn('Non-critical error in pushSongState:', error.message);
+      // Continue with basic metadata even if MPD status fails
     }
   }, metadataDelay * 1000);
 };
@@ -441,7 +514,7 @@ ControllerPlanetRadio.prototype.pushSongStateImmediate = async function (metadat
       }
     }
   } catch (error) {
-    self.logger.error('Failed to get MPD status:', error);
+    self.logger.warn('Failed to get MPD status, continuing with basic metadata:', error.message);
     // Continue with basic metadata even if MPD status fails
   }
 
@@ -458,14 +531,12 @@ ControllerPlanetRadio.prototype.stop = async function () {
     await self.mpdPlugin.sendMpdCommand('clear', []);
     self.logger.info('MPD playback stopped successfully');
   } catch (error) {
-    self.logger.error(`Error stopping MPD playback: ${error}`);
+    self.logger.warn(`MPD playback stop command failed (non-critical): ${error.message}`);
+    // Continue with cleanup even if MPD commands fail
   } finally {
-    // Always stop the streaming proxy and reset UI state, regardless of MPD command success/failure
-    if (self.streamingProxy) {
-      self.streamingProxy.stop();
-    }
+    // Always perform cleanup regardless of MPD command success/failure
     self.updateVolumioState({ status: 'stop' });
-    self.resetUIState();
+    self._cleanupResources();
   }
 
   return libQ.resolve();
@@ -547,8 +618,13 @@ ControllerPlanetRadio.prototype.resetUIState = function () {
 
   // Stop and clear streaming proxy
   if (self.streamingProxy) {
-    self.streamingProxy.stop();
-    self.streamingProxy = null;
+    try {
+      self.streamingProxy.stop();
+    } catch (error) {
+      self.logger.warn('Error stopping streaming proxy during reset:', error.message);
+    } finally {
+      self.streamingProxy = null;
+    }
   }
 
   // Use stored station info for UI display

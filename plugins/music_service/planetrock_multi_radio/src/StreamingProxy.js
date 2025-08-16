@@ -138,6 +138,30 @@ class StreamingProxy {
   }
 
   /**
+   * Common method to fetch and update metadata
+   * @param {string} metadataUrl - The metadata URL
+   * @param {string} context - Context for logging (e.g., 'segment', 'EventSource')
+   * @returns {Promise<void>}
+   */
+  async fetchAndUpdateMetadata(metadataUrl, context = 'unknown') {
+    const self = this;
+
+    if (!metadataUrl) {
+      return;
+    }
+
+    try {
+      const metadata = await self.fetchMetadataFromUrl(metadataUrl);
+      if (metadata && self.onMetadataUpdate) {
+        self.logger.info(`Updated metadata from ${context}: ${JSON.stringify(metadata, null, 2)}`);
+        self.onMetadataUpdate(metadata);
+      }
+    } catch (error) {
+      self.logger.error(`Failed to fetch metadata from ${context}: ${error.message}`);
+    }
+  }
+
+  /**
    * Create metadata object
    * @param {string} title - Track title
    * @param {string} artist - Track artist
@@ -175,6 +199,37 @@ class StreamingProxy {
     } catch (error) {
       self.logger.error('Failed to fetch show data:', error.message);
       return self.createMetadataObject('Non stop music', 'Planet Rock', null, null);
+    }
+  }
+
+  /**
+   * Common method to create HTTP request options with standard headers
+   * @returns {Object} - HTTP request options
+   */
+  getCommonRequestOptions() {
+    return {
+      headers: {
+        Accept: '*/*',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15',
+      },
+      httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false }),
+    };
+  }
+
+  /**
+   * Common method to handle stream errors
+   * @param {Error} error - The error object
+   * @param {string} context - Context for logging (e.g., 'segment', 'direct stream')
+   * @param {Object} res - HTTP response object (optional)
+   */
+  handleStreamError(error, context = 'unknown', res = null) {
+    const self = this;
+    self.logger.error(`${context} error: ${error.message}`);
+
+    if (res && !res.headersSent) {
+      const HTTP_INTERNAL_SERVER_ERROR = 500;
+      res.writeHead(HTTP_INTERNAL_SERVER_ERROR);
+      res.end();
     }
   }
 

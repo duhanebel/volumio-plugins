@@ -60,9 +60,7 @@ class M3U8StreamingProxy extends StreamingProxy {
       // Start streaming segments
       self.hlsCleanupFunction = self.streamHlsSegments(segmentsArray, res);
     } catch (error) {
-      self.logger.error(`Failed to handle HLS stream: ${error.message}`);
-      res.writeHead(StatusCodes.INTERNAL_SERVER_ERROR);
-      res.end();
+      self.handleStreamError(error, 'HLS stream handling', res);
     }
   }
 
@@ -126,17 +124,7 @@ class M3U8StreamingProxy extends StreamingProxy {
       // Extract metadata from the first segment if available
       if (segments.length > 0 && segments[0].metadataUrl) {
         self.logger.info(`Fetching metadata from first segment: ${segments[0].metadataUrl}`);
-        try {
-          const metadata = await self.fetchMetadataFromUrl(segments[0].metadataUrl);
-          if (metadata) {
-            self.logger.info(`Extracted metadata from M3U8 playlist: ${JSON.stringify(metadata, null, 2)}`);
-            if (self.onMetadataUpdate) {
-              self.onMetadataUpdate(metadata);
-            }
-          }
-        } catch (error) {
-          self.logger.error(`Failed to fetch metadata from first segment: ${error.message}`);
-        }
+        await self.fetchAndUpdateMetadata(segments[0].metadataUrl, 'first segment');
       }
 
       return segments;
@@ -226,35 +214,6 @@ class M3U8StreamingProxy extends StreamingProxy {
     return null;
   }
 
-  async fetchMetadataFromUrl(metadataUrl) {
-    const self = this;
-
-    // Skip the -1 event data URL (show information)
-    if (metadataUrl && metadataUrl.endsWith('/eventdata/-1')) {
-      self.logger.info('Skipping -1 event data URL, fetching show information');
-      return await self.fetchShowData(self.currentStationCode);
-    }
-
-    if (!metadataUrl) {
-      return null;
-    }
-
-    try {
-      const response = await axios.get(metadataUrl);
-      self.logger.info(`Fetched metadata from: ${metadataUrl}`);
-
-      if (response.data) {
-        const trackData = response.data;
-        return self.createMetadataObject(trackData.eventSongTitle, trackData.eventSongArtist, '', trackData.eventImageUrl);
-      }
-      return null;
-    } catch (error) {
-      self.logger.error(`Failed to fetch metadata from URL: ${error.message}`);
-      // Fallback to show data
-      return await self.fetchShowData(self.currentStationCode);
-    }
-  }
-
   /**
    * Stream HLS segments
    * @param {Array} segments - Array of segment objects
@@ -277,17 +236,7 @@ class M3U8StreamingProxy extends StreamingProxy {
       // Check for metadata updates from this segment
       if (segment.metadataUrl && currentIndex === 0) {
         // Only fetch metadata from the first segment to avoid spam
-        try {
-          const metadata = await self.fetchMetadataFromUrl(segment.metadataUrl);
-          if (metadata) {
-            self.logger.info(`Updated metadata from segment: ${JSON.stringify(metadata, null, 2)}`);
-            if (self.onMetadataUpdate) {
-              self.onMetadataUpdate(metadata);
-            }
-          }
-        } catch (error) {
-          self.logger.error(`Failed to fetch metadata from segment: ${error.message}`);
-        }
+        await self.fetchAndUpdateMetadata(segment.metadataUrl, 'segment');
       }
 
       // Use the callback to add authentication parameters
@@ -298,11 +247,7 @@ class M3U8StreamingProxy extends StreamingProxy {
           method: 'get',
           url: authenticatedSegmentUrl,
           responseType: 'stream',
-          headers: {
-            Accept: '*/*',
-            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15',
-          },
-          httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false }),
+          ...self.getCommonRequestOptions(),
         });
 
         // M3U8 streams don't use EventSource for metadata
@@ -331,12 +276,12 @@ class M3U8StreamingProxy extends StreamingProxy {
 
         // Handle segment error
         response.data.on('error', error => {
-          self.logger.error(`Segment streaming error: ${error}`);
+          self.handleStreamError(error, 'Segment streaming');
           currentIndex++;
           setTimeout(streamNextSegment, RETRY_DELAY); // Retry after 1 second
         });
       } catch (error) {
-        self.logger.error(`Failed to fetch segment: ${error.message}`);
+        self.handleStreamError(error, 'Segment fetch');
         currentIndex++;
         setTimeout(streamNextSegment, RETRY_DELAY); // Retry after 1 second
       }
