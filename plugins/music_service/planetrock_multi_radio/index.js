@@ -111,6 +111,9 @@ ControllerPlanetRadio.prototype._cleanupResources = function () {
     self.logger.warn('Error resetting UI state during cleanup:', error.message);
   }
 
+  self.isFirstTimeMetadata = true;
+
+
   self.logger.info('Centralized resource cleanup completed');
 };
 
@@ -455,10 +458,31 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
   self.logger.info('ControllerPlanetRadio::clearAddPlayTrack called');
   self.logger.info(`Track object: ${JSON.stringify(track)}`);
 
+  // Stop whatever is currently playing and clean up before starting new playback
+  self.logger.info('Stopping current playback and cleaning up before starting new playback...');
+
+  // Clear any existing metadata timer
+  if (self.metadataUpdateTimer) {
+    try {
+      clearTimeout(self.metadataUpdateTimer);
+      self.metadataUpdateTimer = null;
+    } catch (error) {
+      self.logger.warn('Error clearing metadata timer:', error.message);
+    }
+  }
+
   // Stop any existing streaming proxy
   if (self.streamingProxy) {
-    self.streamingProxy.stop();
+    try {
+      self.streamingProxy.stop();
+      self.streamingProxy = null;
+    } catch (error) {
+      self.logger.warn('Error stopping existing streaming proxy:', error.message);
+    }
   }
+
+  // Reset metadata timing flag for new playback
+  self.isFirstTimeMetadata = true;
 
   // First authenticate, then get streaming URL with parameters and start proxy
   self.logger.info('Starting clearAddPlayTrack - authenticating first...');
@@ -532,6 +556,7 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
       self.state.status = 'play';
       self.commandRouter.servicePushState(self.state, self.serviceName);
       self.logger.info('Playback started successfully');
+
       defer.resolve();
     })
     .fail(function (error) {
@@ -666,33 +691,20 @@ ControllerPlanetRadio.prototype.pushSongStateImmediate = function (metadata) {
 
 ControllerPlanetRadio.prototype.stop = function () {
   const self = this;
-  const defer = libQ.defer();
 
   // Stop MPD playback first
-  self.mpdPlugin
-    .sendMpdCommand('stop', [])
+  return self.mpdPlugin
+    .stop()
     .then(function () {
       return self.mpdPlugin.sendMpdCommand('clear', []);
     })
     .then(function () {
       self.logger.info('MPD playback stopped successfully');
-    })
-    .fail(function (error) {
-      self.logger.warn(`MPD playback stop command failed (non-critical): ${error.message}`);
-      // Continue with cleanup even if MPD commands fail
-    })
-    .fin(function () {
+    }).then(function () {
       // Always perform cleanup regardless of MPD command success/failure
       self.updateVolumioState({ status: 'stop' });
       self._cleanupResources();
-
-      // Reset metadata timing flag for next playback
-      self.isFirstTimeMetadata = true;
-
-      defer.resolve();
     });
-
-  return defer.promise;
 };
 
 ControllerPlanetRadio.prototype.pause = function () {
