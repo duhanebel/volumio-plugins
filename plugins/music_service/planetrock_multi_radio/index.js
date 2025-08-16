@@ -226,7 +226,6 @@ ControllerPlanetRadio.prototype.addToBrowseSources = function () {
 
 ControllerPlanetRadio.prototype.handleBrowseUri = function (curUri) {
   const self = this;
-  const defer = libQ.defer();
 
   self.logger.info(`handleBrowseUri called with URI: ${curUri}`);
 
@@ -234,9 +233,11 @@ ControllerPlanetRadio.prototype.handleBrowseUri = function (curUri) {
     // User selected a related station, fetch its info and resolve stream URL
     const stationCode = curUri.split('/')[1];
 
-    // Use StationManager to get station info and create playable item
-    self.stationManager
-      .getStationInfo(stationCode)
+    // Use StationManager to get station info (convert native Promise to libQ promise)
+    const stationInfoPromise = self.stationManager.getStationInfo(stationCode);
+    const libQPromise = libQ.defer();
+
+    stationInfoPromise
       .then(function (stationInfo) {
         // Return a single playable item
         const item = {
@@ -264,9 +265,9 @@ ControllerPlanetRadio.prototype.handleBrowseUri = function (curUri) {
           },
         };
 
-        defer.resolve(result);
+        libQPromise.resolve(result);
       })
-      .fail(function (error) {
+      .catch(function (error) {
         const errorMessage = error.message || 'Unknown error occurred';
         self.logger.error(`Failed to resolve station info for ${stationCode}: ${errorMessage}`);
 
@@ -276,23 +277,19 @@ ControllerPlanetRadio.prototype.handleBrowseUri = function (curUri) {
         }
 
         self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_STREAMING'));
-        defer.reject(error);
+        libQPromise.reject(error);
       });
-  } else if (curUri === 'planetradio') {
-    self
-      .getRootContent()
-      .then(function (response) {
-        defer.resolve(response);
-      })
-      .fail(function (error) {
-        self.logger.error(`ControllerPlanetRadio::handleBrowseUri failed: ${error}`);
-        defer.reject(error);
-      });
-  } else {
-    defer.reject(new Error('Invalid URI'));
-  }
 
-  return defer.promise;
+    return libQPromise.promise;
+  } else if (curUri === 'planetradio') {
+    // getRootContent() already returns a libQ promise, so we can use it directly
+    return self.getRootContent();
+  } else {
+    // Return rejected promise for invalid URI
+    const defer = libQ.defer();
+    defer.reject(new Error('Invalid URI'));
+    return defer.promise;
+  }
 };
 
 ControllerPlanetRadio.prototype.updateConfig = function (data) {
@@ -340,13 +337,18 @@ ControllerPlanetRadio.prototype.authenticate = function () {
     return defer.promise;
   }
 
-  // Use AuthManager to handle authentication
-  self.authManager
-    .authenticate(username, password)
+  self.logger.info('Starting authentication with AuthManager...');
+
+  // Use AuthManager to handle authentication (convert native Promise to libQ promise)
+  const authPromise = self.authManager.authenticate(username, password);
+  const libQPromise = libQ.defer();
+
+  authPromise
     .then(function (userId) {
-      defer.resolve(userId);
+      self.logger.info(`AuthManager authentication successful, user ID: ${userId}`);
+      libQPromise.resolve(userId);
     })
-    .fail(function (error) {
+    .catch(function (error) {
       const errorMessage = error.message || 'Unknown authentication error';
       self.logger.error(`Authentication failed: ${errorMessage}`);
 
@@ -356,20 +358,24 @@ ControllerPlanetRadio.prototype.authenticate = function () {
       }
 
       self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_INVALID_CREDENTIALS'));
-      defer.reject(new Error(self.getRadioI18nString('ERROR_INVALID_CREDENTIALS')));
+      libQPromise.reject(new Error(self.getRadioI18nString('ERROR_INVALID_CREDENTIALS')));
     });
 
-  return defer.promise;
+  return libQPromise.promise;
 };
 
 ControllerPlanetRadio.prototype.getRootContent = function () {
   const self = this;
-  const defer = libQ.defer();
 
-  // Use StationManager to get stations
-  self.stationManager
-    .getStations()
+  self.logger.info('Getting root content - fetching stations...');
+  
+  // Use StationManager to get stations (convert native Promise to libQ promise)
+  const stationsPromise = self.stationManager.getStations();
+  const libQPromise = libQ.defer();
+
+  stationsPromise
     .then(function (stations) {
+      self.logger.info(`Stations received in getRootContent: ${stations.length} stations`);
       const result = {
         navigation: {
           prev: { uri: 'music' },
@@ -382,9 +388,10 @@ ControllerPlanetRadio.prototype.getRootContent = function () {
           ],
         },
       };
-      defer.resolve(result);
+      self.logger.info('Root content result created successfully');
+      libQPromise.resolve(result);
     })
-    .fail(function (error) {
+    .catch(function (error) {
       const errorMessage = error.message || 'Unknown error occurred';
       self.logger.error(`Failed to get root content: ${errorMessage}`);
 
@@ -394,25 +401,31 @@ ControllerPlanetRadio.prototype.getRootContent = function () {
       }
 
       self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_STREAMING'));
-      defer.reject(error);
+      libQPromise.reject(error);
     });
 
-  return defer.promise;
+  return libQPromise.promise;
 };
 
 ControllerPlanetRadio.prototype.explodeUri = function (uri) {
   const self = this;
-  const defer = libQ.defer();
 
   self.logger.info(`explodeUri called with URI: ${uri}`);
 
   if (uri.startsWith('planetradio/')) {
     const stationCode = uri.split('/')[1];
 
-    // Use StationManager to get station info
-    self.stationManager
-      .getStationInfo(stationCode)
+    self.logger.info(`Extracted station code: ${stationCode}`);
+
+    // Use StationManager to get station info (convert native Promise to libQ promise)
+    const stationInfoPromise = self.stationManager.getStationInfo(stationCode);
+    const libQPromise = libQ.defer();
+
+    self.logger.info(`Calling getStationInfo for station code: ${stationCode}`);
+
+    stationInfoPromise
       .then(function (stationInfo) {
+        self.logger.info(`Station info received in explodeUri: ${JSON.stringify(stationInfo)}`);
         const track = {
           uri,
           service: self.serviceName,
@@ -424,9 +437,10 @@ ControllerPlanetRadio.prototype.explodeUri = function (uri) {
           duration: UNKNOWN_DURATION,
         };
 
-        defer.resolve(track);
+        self.logger.info(`Created track object: ${JSON.stringify(track)}`);
+        libQPromise.resolve(track);
       })
-      .fail(function (error) {
+      .catch(function (error) {
         const errorMessage = error.message || 'Unknown error occurred';
         self.logger.error(`Failed to explode URI ${uri}: ${errorMessage}`);
 
@@ -436,20 +450,24 @@ ControllerPlanetRadio.prototype.explodeUri = function (uri) {
         }
 
         self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_STREAMING'));
-        defer.reject(error);
+        libQPromise.reject(error);
       });
-  } else {
-    defer.reject(new Error('Invalid URI format'));
-  }
 
-  return defer.promise;
+    return libQPromise.promise;
+  } else {
+    // Return rejected promise for invalid URI
+    const defer = libQ.defer();
+    defer.reject(new Error('Invalid URI format'));
+    return defer.promise;
+  }
 };
 
 ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
   const self = this;
   const defer = libQ.defer();
 
-  self.commandRouter.logger.info('ControllerPlanetRadio::clearAddPlayTrack');
+  self.logger.info('ControllerPlanetRadio::clearAddPlayTrack called');
+  self.logger.info(`Track object: ${JSON.stringify(track)}`);
 
   // Stop any existing streaming proxy
   if (self.streamingProxy) {
@@ -457,23 +475,58 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
   }
 
   // First authenticate, then get streaming URL with parameters and start proxy
+  self.logger.info('Starting clearAddPlayTrack - authenticating first...');
   self
     .authenticate()
-    .then(function () {
+    .then(function (userId) {
+      self.logger.info(`Authentication successful, proceeding to get station info... User ID: ${userId}`);
       // Extract station code from track.uri if possible (e.g., planetradio/[stationCode])
       let stationCode = DEFAULT_STATION_CODE; // default
       if (track && track.uri && track.uri.startsWith('planetradio/')) {
         stationCode = track.uri.split('/')[1];
       }
 
-      // Get station info and store it
-      return self.stationManager.getStationInfo(stationCode);
+      self.logger.info(`Getting station info for station code: ${stationCode}`);
+
+      // Get station info and store it (convert native Promise to libQ promise)
+      const stationInfoPromise = self.stationManager.getStationInfo(stationCode);
+      const libQPromise = libQ.defer();
+
+      stationInfoPromise
+        .then(function (stationInfo) {
+          self.logger.info(`Station info received: ${JSON.stringify(stationInfo)}`);
+          self.currentStationInfo = stationInfo;
+          libQPromise.resolve(stationInfo);
+        })
+        .catch(function (error) {
+          self.logger.error(`Failed to get station info: ${error.message}`);
+          libQPromise.reject(error);
+        });
+
+      return libQPromise.promise;
     })
     .then(function (stationInfo) {
-      self.currentStationInfo = stationInfo;
-      return self.stationManager.getStreamingURL(stationInfo.code);
+      self.logger.info(`Getting streaming URL for station: ${stationInfo.code}`);
+
+      // Get streaming URL (convert native Promise to libQ promise)
+      const streamingUrlPromise = self.stationManager.getStreamingURL(stationInfo.code);
+      const libQPromise = libQ.defer();
+
+      streamingUrlPromise
+        .then(function (streamUrl) {
+          self.logger.info(`Streaming URL received: ${streamUrl}`);
+          libQPromise.resolve(streamUrl);
+        })
+        .catch(function (error) {
+          self.logger.error(`Failed to get streaming URL: ${error.message}`);
+          libQPromise.reject(error);
+        });
+
+      return libQPromise.promise;
     })
     .then(function (streamUrl) {
+      self.logger.info('Creating streaming proxy...');
+
       // Create the appropriate streaming proxy using the factory method
       self.streamingProxy = StreamingProxyFactory.createProxy(streamUrl, self.logger, self.addAuthParamsToStreamURL.bind(self));
 
@@ -482,24 +535,31 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
         self.pushSongState(metadata);
       });
 
+      self.logger.info('Starting proxy server...');
       return self.streamingProxy.startProxyServer(streamUrl, self.currentStationInfo.code);
     })
     .then(function () {
       // Update track URI to use local proxy
       track.uri = self.streamingProxy.getLocalStreamUrl();
+      self.logger.info(`Updated track URI to local proxy: ${track.uri}`);
 
+      self.logger.info('Sending MPD stop command...');
       return self.mpdPlugin.sendMpdCommand('stop', []);
     })
     .then(function () {
+      self.logger.info('Sending MPD clear command...');
       return self.mpdPlugin.sendMpdCommand('clear', []);
     })
     .then(function () {
+      self.logger.info('Sending MPD add command...');
       return self.mpdPlugin.sendMpdCommand(`add "${track.uri}"`, []);
     })
     .then(function () {
+      self.logger.info('Sending MPD consume command...');
       return self.mpdPlugin.sendMpdCommand('consume 1', []);
     })
     .then(function () {
+      self.logger.info('Sending MPD play command...');
       self.commandRouter.pushToastMessage('info', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('WAIT_FOR_RADIO_CHANNEL'));
 
       return self.mpdPlugin.sendMpdCommand('play', []);
@@ -674,7 +734,24 @@ ControllerPlanetRadio.prototype.previous = function () {
 ControllerPlanetRadio.prototype.addAuthParamsToStreamURL = function (streamUrl) {
   const self = this;
   const userId = self.authManager.getUserId();
-  return self.stationManager.addAuthParameters(streamUrl, userId);
+
+  self.logger.info(`Adding auth parameters to stream URL for user ID: ${userId}`);
+
+  // Convert native Promise to libQ promise
+  const authParamsPromise = self.stationManager.addAuthParameters(streamUrl, userId);
+  const libQPromise = libQ.defer();
+
+  authParamsPromise
+    .then(function (result) {
+      self.logger.info('Auth parameters added successfully');
+      libQPromise.resolve(result);
+    })
+    .catch(function (error) {
+      self.logger.error(`Failed to add auth parameters: ${error.message}`);
+      libQPromise.reject(error);
+    });
+
+  return libQPromise.promise;
 };
 
 /**
