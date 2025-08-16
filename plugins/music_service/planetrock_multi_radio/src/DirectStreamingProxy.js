@@ -116,13 +116,19 @@ class DirectStreamingProxy extends StreamingProxy {
     const self = this;
 
     try {
+      self.logger.info(`Starting direct stream handling for URL: ${streamUrl.toString()}`);
+
       const authenticatedStreamUrl = self.addAuthParamsToStreamURL(streamUrl);
+      self.logger.info(`Authenticated stream URL: ${authenticatedStreamUrl.toString()}`);
+
       const response = await axios({
         method: 'get',
         url: authenticatedStreamUrl.toString(),
         responseType: 'stream',
         ...self.getCommonRequestOptions(),
       });
+
+      self.logger.info(`Stream response received, status: ${response.status}`);
 
       // Get cookies from response
       const cookies = response.headers['set-cookie'];
@@ -144,6 +150,8 @@ class DirectStreamingProxy extends StreamingProxy {
         'Transfer-Encoding': 'chunked',
       });
 
+      self.logger.info('Stream headers set, starting to pipe data...');
+
       // Pipe the stream
       response.data.pipe(res);
 
@@ -155,9 +163,14 @@ class DirectStreamingProxy extends StreamingProxy {
 
       // Handle stream error
       response.data.on('error', error => {
+        self.logger.error(`Stream data error: ${error.message}`);
         self.handleStreamError(error, 'Direct stream', res);
       });
     } catch (error) {
+      self.logger.error(`Failed to handle direct stream: ${error.message}`);
+      if (error.stack) {
+        self.logger.error('Error stack trace:', error.stack);
+      }
       self.handleStreamError(error, 'Direct stream request', res);
     }
   }

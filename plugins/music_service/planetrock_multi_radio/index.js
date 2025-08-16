@@ -277,7 +277,13 @@ ControllerPlanetRadio.prototype.handleBrowseUri = function (curUri) {
         }
 
         self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_STREAMING'));
-        libQPromise.reject(error);
+
+        // Only reject if not already resolved
+        if (libQPromise.promise._state === 'pending') {
+          libQPromise.reject(error);
+        } else {
+          self.logger.warn('Promise already resolved, skipping reject');
+        }
       });
 
     return libQPromise.promise;
@@ -358,7 +364,13 @@ ControllerPlanetRadio.prototype.authenticate = function () {
       }
 
       self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_INVALID_CREDENTIALS'));
-      libQPromise.reject(new Error(self.getRadioI18nString('ERROR_INVALID_CREDENTIALS')));
+
+      // Only reject if not already resolved
+      if (libQPromise.promise._state === 'pending') {
+        libQPromise.reject(new Error(self.getRadioI18nString('ERROR_INVALID_CREDENTIALS')));
+      } else {
+        self.logger.warn('Promise already resolved, skipping reject');
+      }
     });
 
   return libQPromise.promise;
@@ -368,7 +380,7 @@ ControllerPlanetRadio.prototype.getRootContent = function () {
   const self = this;
 
   self.logger.info('Getting root content - fetching stations...');
-  
+
   // Use StationManager to get stations (convert native Promise to libQ promise)
   const stationsPromise = self.stationManager.getStations();
   const libQPromise = libQ.defer();
@@ -401,7 +413,13 @@ ControllerPlanetRadio.prototype.getRootContent = function () {
       }
 
       self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_STREAMING'));
-      libQPromise.reject(error);
+
+      // Only reject if not already resolved
+      if (libQPromise.promise._state === 'pending') {
+        libQPromise.reject(error);
+      } else {
+        self.logger.warn('Promise already resolved, skipping reject');
+      }
     });
 
   return libQPromise.promise;
@@ -450,7 +468,13 @@ ControllerPlanetRadio.prototype.explodeUri = function (uri) {
         }
 
         self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_STREAMING'));
-        libQPromise.reject(error);
+
+        // Only reject if not already resolved
+        if (libQPromise.promise._state === 'pending') {
+          libQPromise.reject(error);
+        } else {
+          self.logger.warn('Promise already resolved, skipping reject');
+        }
       });
 
     return libQPromise.promise;
@@ -500,7 +524,11 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
         })
         .catch(function (error) {
           self.logger.error(`Failed to get station info: ${error.message}`);
-          libQPromise.reject(error);
+          if (libQPromise.promise._state === 'pending') {
+            libQPromise.reject(error);
+          } else {
+            self.logger.warn('Promise already resolved, skipping reject');
+          }
         });
 
       return libQPromise.promise;
@@ -519,7 +547,11 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
         })
         .catch(function (error) {
           self.logger.error(`Failed to get streaming URL: ${error.message}`);
-          libQPromise.reject(error);
+          if (libQPromise.promise._state === 'pending') {
+            libQPromise.reject(error);
+          } else {
+            self.logger.warn('Promise already resolved, skipping reject');
+          }
         });
 
       return libQPromise.promise;
@@ -565,8 +597,10 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
       return self.mpdPlugin.sendMpdCommand('play', []);
     })
     .then(function () {
+      self.logger.info('All MPD commands completed successfully, updating state...');
       self.state.status = 'play';
       self.commandRouter.servicePushState(self.state, self.serviceName);
+      self.logger.info('Playback started successfully');
       defer.resolve();
     })
     .fail(function (error) {
@@ -579,7 +613,13 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
       }
 
       self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_STREAMING'));
-      defer.reject(new Error(self.getRadioI18nString('ERROR_STREAMING')));
+
+      // Only reject if not already resolved
+      if (defer.promise._state === 'pending') {
+        defer.reject(new Error(self.getRadioI18nString('ERROR_STREAMING')));
+      } else {
+        self.logger.warn('Promise already resolved, skipping reject');
+      }
     });
 
   return defer.promise;
@@ -737,21 +777,41 @@ ControllerPlanetRadio.prototype.addAuthParamsToStreamURL = function (streamUrl) 
 
   self.logger.info(`Adding auth parameters to stream URL for user ID: ${userId}`);
 
-  // Convert native Promise to libQ promise
-  const authParamsPromise = self.stationManager.addAuthParameters(streamUrl, userId);
-  const libQPromise = libQ.defer();
+  if (!userId) {
+    self.logger.error('No user ID available for authentication');
+    return streamUrl; // Return original URL if no auth
+  }
 
-  authParamsPromise
-    .then(function (result) {
-      self.logger.info('Auth parameters added successfully');
-      libQPromise.resolve(result);
-    })
-    .catch(function (error) {
-      self.logger.error(`Failed to add auth parameters: ${error.message}`);
-      libQPromise.reject(error);
-    });
+  if (!streamUrl) {
+    self.logger.error('No stream URL provided for authentication');
+    return streamUrl;
+  }
 
-  return libQPromise.promise;
+  try {
+    // Convert native Promise to libQ promise
+    const authParamsPromise = self.stationManager.addAuthParameters(streamUrl, userId);
+    const libQPromise = libQ.defer();
+
+    authParamsPromise
+      .then(function (result) {
+        self.logger.info('Auth parameters added successfully');
+        libQPromise.resolve(result);
+      })
+      .catch(function (error) {
+        self.logger.error(`Failed to add auth parameters: ${error.message}`);
+        // Return original URL if auth fails
+        if (libQPromise.promise._state === 'pending') {
+          libQPromise.resolve(streamUrl);
+        } else {
+          self.logger.warn('Promise already resolved, skipping resolve');
+        }
+      });
+
+    return libQPromise.promise;
+  } catch (error) {
+    self.logger.error(`Error in addAuthParamsToStreamURL: ${error.message}`);
+    return streamUrl; // Return original URL if error
+  }
 };
 
 /**

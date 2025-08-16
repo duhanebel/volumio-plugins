@@ -3,6 +3,9 @@
 const libQ = require('kew');
 const axios = require('axios');
 
+// Constants
+const HTTP_NOT_FOUND = 404;
+
 /**
  * Abstract base class for streaming proxies
  */
@@ -49,19 +52,40 @@ class StreamingProxy {
     self.currentStreamUrl = streamUrl;
     self.currentStationCode = stationCode;
 
-    // Create the proxy server and find an available port
-    self.proxyServer = require('http').createServer(function (req, res) {
-      if (req.url === '/stream') {
-        self.logger.info(`Proxying stream request to: ${streamUrl.toString()} `);
-        self.handleStream(streamUrl, res);
-      }
-    });
+    try {
+      // Create the proxy server and find an available port
+      self.proxyServer = require('http').createServer(function (req, res) {
+        if (req.url === '/stream') {
+          self.logger.info(`Proxying stream request to: ${streamUrl.toString()} `);
+          self.handleStream(streamUrl, res);
+        } else {
+          // Handle unknown routes
+          self.logger.warn(`Unknown route requested: ${req.url}`);
+          res.writeHead(HTTP_NOT_FOUND, { 'Content-Type': 'text/plain' });
+          res.end('Not Found');
+        }
+      });
 
-    self.proxyServer.listen(0, function () {
-      self.proxyPort = self.proxyServer.address().port;
-      self.logger.info(`Proxy server listening on port ${self.proxyPort}`);
-      defer.resolve();
-    });
+      // Add error handling for the server
+      self.proxyServer.on('error', function (error) {
+        self.logger.error(`Proxy server error: ${error.message}`);
+        defer.reject(error);
+      });
+
+      self.proxyServer.listen(0, function () {
+        try {
+          self.proxyPort = self.proxyServer.address().port;
+          self.logger.info(`Proxy server listening on port ${self.proxyPort}`);
+          defer.resolve();
+        } catch (error) {
+          self.logger.error(`Failed to get proxy server port: ${error.message}`);
+          defer.reject(error);
+        }
+      });
+    } catch (error) {
+      self.logger.error(`Failed to create proxy server: ${error.message}`);
+      defer.reject(error);
+    }
 
     return defer.promise;
   }
