@@ -2,10 +2,10 @@
 
 const StreamingProxy = require('./StreamingProxy');
 const axios = require('axios');
-const { StatusCodes } = require('http-status-codes');
 
 // Constants
 const RETRY_DELAY = 1000;
+const HTTP_OK = 200;
 
 /**
  * Streaming proxy for HLS/M3U8 streams
@@ -29,7 +29,7 @@ class M3U8StreamingProxy extends StreamingProxy {
     self.logger.info(`Starting HLS stream handling for: ${playlistUrl.toString()}`);
 
     // Set appropriate headers for HLS stream with buffering
-    res.writeHead(StatusCodes.OK, {
+    res.writeHead(HTTP_OK, {
       'Content-Type': 'audio/aac',
       'Transfer-Encoding': 'chunked',
       'Cache-Control': 'no-cache',

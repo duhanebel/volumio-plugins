@@ -2,10 +2,10 @@
 
 const StreamingProxy = require('./StreamingProxy');
 const axios = require('axios');
-const { StatusCodes } = require('http-status-codes');
 
 // Constants
 const RETRY_DELAY = 1000;
+const HTTP_OK = 200;
 
 /**
  * Streaming proxy for direct AAC streams
@@ -139,7 +139,7 @@ class DirectStreamingProxy extends StreamingProxy {
       }
 
       // Set appropriate headers
-      res.writeHead(StatusCodes.OK, {
+      res.writeHead(HTTP_OK, {
         'Content-Type': 'audio/aac',
         'Transfer-Encoding': 'chunked',
       });

@@ -21,7 +21,6 @@
     "axios": "^1.9.0",
     "eventsource": "^2.0.2",
     "fs-extra": "^0.28.0",
-    "http-status-codes": "^2.3.0",
     "kew": "^0.7.0",
     "v-conf": "^1.4.2"
   },
