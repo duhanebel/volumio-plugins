@@ -4,6 +4,9 @@ const StreamingProxy = require('./StreamingProxy');
 const axios = require('axios');
 const { StatusCodes } = require('http-status-codes');
 
+// Constants
+const RETRY_DELAY = 1000;
+
 /**
  * Streaming proxy for HLS/M3U8 streams
  */
@@ -127,7 +130,7 @@ class M3U8StreamingProxy extends StreamingProxy {
           const metadata = await self.fetchMetadataFromUrl(segments[0].metadataUrl);
           if (metadata) {
             self.logger.info(`Extracted metadata from M3U8 playlist: ${JSON.stringify(metadata, null, 2)}`);
-            if(self.onMetadataUpdate) {
+            if (self.onMetadataUpdate) {
               self.onMetadataUpdate(metadata);
             }
           }
@@ -278,7 +281,7 @@ class M3U8StreamingProxy extends StreamingProxy {
           const metadata = await self.fetchMetadataFromUrl(segment.metadataUrl);
           if (metadata) {
             self.logger.info(`Updated metadata from segment: ${JSON.stringify(metadata, null, 2)}`);
-            if(self.onMetadataUpdate) {
+            if (self.onMetadataUpdate) {
               self.onMetadataUpdate(metadata);
             }
           }
@@ -330,12 +333,12 @@ class M3U8StreamingProxy extends StreamingProxy {
         response.data.on('error', error => {
           self.logger.error(`Segment streaming error: ${error}`);
           currentIndex++;
-          setTimeout(streamNextSegment, 1000); // Retry after 1 second
+          setTimeout(streamNextSegment, RETRY_DELAY); // Retry after 1 second
         });
       } catch (error) {
         self.logger.error(`Failed to fetch segment: ${error.message}`);
         currentIndex++;
-        setTimeout(streamNextSegment, 1000); // Retry after 1 second
+        setTimeout(streamNextSegment, RETRY_DELAY); // Retry after 1 second
       }
     };
 
@@ -393,7 +396,7 @@ class M3U8StreamingProxy extends StreamingProxy {
       // Retry after a short delay
       setTimeout(() => {
         self.refreshHlsPlaylist(playlistUrl, currentSegments, res, continueCallback);
-      }, 1000);
+      }, RETRY_DELAY);
     }
   }
 

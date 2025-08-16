@@ -37,7 +37,6 @@ class StreamingProxy {
    * @returns {BaseStreamingProxy} - The appropriate streaming proxy instance
    */
   static createProxy(streamUrl, logger, addAuthParamsCallback) {
-
     // Create appropriate proxy based on stream type
     if (streamUrl.pathname.includes('.m3u8')) {
       logger.info('Creating M3U8 streaming proxy for HLS stream');
@@ -138,8 +137,6 @@ class StreamingProxy {
     }
   }
 
-
-
   /**
    * Create metadata object
    * @param {string} title - Track title
@@ -149,9 +146,8 @@ class StreamingProxy {
    * @returns {Object} - Metadata object
    */
   createMetadataObject(title, artist, album, albumart) {
-    
     return {
-      title: title == '' ? null : title, 
+      title: title == '' ? null : title,
       artist: artist == '' ? null : artist,
       album: album == '' ? null : album,
       albumart: albumart == '' ? null : albumart,
@@ -178,7 +174,7 @@ class StreamingProxy {
       throw new Error('No show data available');
     } catch (error) {
       self.logger.error('Failed to fetch show data:', error.message);
-      return self.createMetadataObject('Non stop music', 'Planet Rock', null, null); //TODO we need to move this to index.js
+      return self.createMetadataObject('Non stop music', 'Planet Rock', null, null);
     }
   }
 

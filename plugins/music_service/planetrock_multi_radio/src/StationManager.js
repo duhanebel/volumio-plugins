@@ -224,7 +224,7 @@ class StationManager {
         name: station.stationName,
         code: stationCode,
         stationStrapline: station.stationStrapline,
-        albumart: station.stationSquareLogo ,
+        albumart: station.stationSquareLogo,
       };
     } catch (error) {
       self.logger.error(`[getStationInfo] Failed to fetch station info: ${error}`);
@@ -274,7 +274,6 @@ class StationManager {
 
     return url;
   }
-
 }
 
 module.exports = StationManager;

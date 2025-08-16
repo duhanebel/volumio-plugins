@@ -6,6 +6,6 @@ echo "Installing Planet Radio plugin"
 npm install
 
 # Copy plugin icon
-cp planet_radio.webp /volumio/http/www3/assets/images/planet_radio.webp
+cp assets/planet_radio.webp /volumio/http/www3/assets/images/planet_radio.webp
 
 echo "Plugin installed" 

@@ -4,6 +4,9 @@ const StreamingProxy = require('./StreamingProxy');
 const axios = require('axios');
 const { StatusCodes } = require('http-status-codes');
 
+// Constants
+const RETRY_DELAY = 1000;
+
 /**
  * Streaming proxy for direct AAC streams
  */
@@ -58,7 +61,7 @@ class DirectStreamingProxy extends StreamingProxy {
 
       if (self.eventSource.readyState === require('eventsource').CLOSED) {
         self.logger.info(`[${timestamp}] Connection closed, attempting to reconnect in 1 second...`);
-        setTimeout(() => self.setupEventSource(), 1000);
+        setTimeout(() => self.setupEventSource(), RETRY_DELAY);
       }
     };
 
