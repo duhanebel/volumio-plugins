@@ -4,7 +4,7 @@ const libQ = require('kew');
 const fs = require('fs-extra');
 const AuthManager = require('./src/AuthManager');
 const StationManager = require('./src/StationManager');
-const StreamingProxy = require('./src/StreamingProxy');
+const StreamingProxyFactory = require('./src/StreamingProxyFactory');
 
 // Constants
 const DEFAULT_STATION_CODE = 'pln';
@@ -406,7 +406,7 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = async function (track) {
     const streamUrl = await self.stationManager.getStreamingURL(stationCode);
 
     // Create the appropriate streaming proxy using the factory method
-    self.streamingProxy = StreamingProxy.createProxy(streamUrl, self.logger, self.addAuthParamsToStreamURL.bind(self));
+    self.streamingProxy = StreamingProxyFactory.createProxy(streamUrl, self.logger, self.addAuthParamsToStreamURL.bind(self));
 
     // Set up metadata callback for the streaming proxy
     self.streamingProxy.setMetadataCallback(function (metadata) {
