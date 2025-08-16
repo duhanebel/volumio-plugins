@@ -239,40 +239,49 @@ class StationManager {
    * @returns {URL} - Stream URL object with authentication parameters
    */
   addAuthParameters(streamUrl, userId) {
+    this.logger.info(`[addAuthParameters] Input streamUrl type: ${typeof streamUrl}, value: ${streamUrl}`);
+
     if (!streamUrl) {
+      this.logger.warn('[addAuthParameters] No streamUrl provided');
       return streamUrl;
     }
 
-    // Create a copy of the URL to avoid modifying the original
-    const url = new URL(streamUrl.toString());
-    const existingParams = new URLSearchParams(url.search);
+    try {
+      // Create a copy of the URL to avoid modifying the original
+      const url = new URL(streamUrl.toString());
+      this.logger.info(`[addAuthParameters] Created URL object: ${url.toString()}`);
+      const existingParams = new URLSearchParams(url.search);
 
-    // Prepare authentication parameters
-    const currentEpoch = Math.floor(Date.now() / 1000);
-    const authParams = {
-      direct: 'false',
-      listenerid: userId,
-      'aw_0_1st.bauer_listenerid': userId,
-      'aw_0_1st.playerid': 'BMUK_inpage_html5',
-      'aw_0_1st.skey': currentEpoch.toString(),
-      'aw_0_1st.bauer_loggedin': 'true',
-      user_id: userId,
-      'aw_0_1st.bauer_user_id': userId,
-      region: 'GB',
-    };
+      // Prepare authentication parameters
+      const currentEpoch = Math.floor(Date.now() / 1000);
+      const authParams = {
+        direct: 'false',
+        listenerid: userId,
+        'aw_0_1st.bauer_listenerid': userId,
+        'aw_0_1st.playerid': 'BMUK_inpage_html5',
+        'aw_0_1st.skey': currentEpoch.toString(),
+        'aw_0_1st.bauer_loggedin': 'true',
+        user_id: userId,
+        'aw_0_1st.bauer_user_id': userId,
+        region: 'GB',
+      };
 
-    // Add authentication parameters to existing ones
-    Object.keys(authParams).forEach(key => {
-      existingParams.set(key, authParams[key]);
-    });
+      // Add authentication parameters to existing ones
+      Object.keys(authParams).forEach(key => {
+        existingParams.set(key, authParams[key]);
+      });
 
-    // Reconstruct the URL with all parameters
-    url.search = existingParams.toString();
+      // Reconstruct the URL with all parameters
+      url.search = existingParams.toString();
 
-    this.logger.info('Added authentication parameters to stream URL');
-    this.logger.info(`Authenticated stream URL: ${url.toString()}`);
+      this.logger.info('Added authentication parameters to stream URL');
+      this.logger.info(`Authenticated stream URL: ${url.toString()}`);
 
-    return url;
+      return url;
+    } catch (error) {
+      this.logger.error(`[addAuthParameters] Error creating URL: ${error.message}`);
+      return streamUrl; // Return original if URL creation fails
+    }
   }
 }
 

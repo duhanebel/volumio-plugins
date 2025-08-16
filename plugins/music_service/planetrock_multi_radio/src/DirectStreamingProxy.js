@@ -118,7 +118,7 @@ class DirectStreamingProxy extends StreamingProxy {
     try {
       self.logger.info(`Starting direct stream handling for URL: ${streamUrl.toString()}`);
 
-      const authenticatedStreamUrl = self.addAuthParamsToStreamURL(streamUrl);
+      const authenticatedStreamUrl = self.addAuthParamsCallback(streamUrl);
       self.logger.info(`Authenticated stream URL: ${authenticatedStreamUrl.toString()}`);
 
       const response = await axios({

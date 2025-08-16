@@ -37,7 +37,7 @@ class M3U8StreamingProxy extends StreamingProxy {
     });
 
     try {
-      const authenticatedStreamUrl = self.addAuthParamsToStreamURL(playlistUrl);
+      const authenticatedStreamUrl = self.addAuthParamsCallback(playlistUrl);
       // First, try to resolve master playlist to get the media playlist URL
       const mediaPlaylistUrl = await self.resolveMasterPlaylist(authenticatedStreamUrl);
 
@@ -45,7 +45,7 @@ class M3U8StreamingProxy extends StreamingProxy {
       const finalPlaylistUrl = mediaPlaylistUrl || authenticatedStreamUrl;
 
       // Fetch and parse the media playlist
-      const autheticatedFilanPlaylistUrl = self.addAuthParamsToStreamURL(finalPlaylistUrl);
+      const autheticatedFilanPlaylistUrl = self.addAuthParamsCallback(finalPlaylistUrl);
       const segments = await self.fetchM3u8Playlist(autheticatedFilanPlaylistUrl);
 
       if (segments.length === 0) {

@@ -776,6 +776,7 @@ ControllerPlanetRadio.prototype.addAuthParamsToStreamURL = function (streamUrl) 
   const userId = self.authManager.getUserId();
 
   self.logger.info(`Adding auth parameters to stream URL for user ID: ${userId}`);
+  self.logger.info(`Stream URL type: ${typeof streamUrl}, value: ${streamUrl}`);
 
   if (!userId) {
     self.logger.error('No user ID available for authentication');
@@ -788,26 +789,10 @@ ControllerPlanetRadio.prototype.addAuthParamsToStreamURL = function (streamUrl) 
   }
 
   try {
-    // Convert native Promise to libQ promise
-    const authParamsPromise = self.stationManager.addAuthParameters(streamUrl, userId);
-    const libQPromise = libQ.defer();
-
-    authParamsPromise
-      .then(function (result) {
-        self.logger.info('Auth parameters added successfully');
-        libQPromise.resolve(result);
-      })
-      .catch(function (error) {
-        self.logger.error(`Failed to add auth parameters: ${error.message}`);
-        // Return original URL if auth fails
-        if (libQPromise.promise._state === 'pending') {
-          libQPromise.resolve(streamUrl);
-        } else {
-          self.logger.warn('Promise already resolved, skipping resolve');
-        }
-      });
-
-    return libQPromise.promise;
+    // Call the synchronous method directly
+    const result = self.stationManager.addAuthParameters(streamUrl, userId);
+    self.logger.info('Auth parameters added successfully');
+    return result;
   } catch (error) {
     self.logger.error(`Error in addAuthParamsToStreamURL: ${error.message}`);
     return streamUrl; // Return original URL if error
