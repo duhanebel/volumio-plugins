@@ -140,12 +140,34 @@ ControllerPlanetRadio.prototype.getUIConfig = function () {
   const defer = libQ.defer();
   const lang_code = this.commandRouter.sharedVars.get('language_code');
 
+  self.logger.info('getUIConfig called, language code:', lang_code);
+
+  // Ensure config is loaded before proceeding
+  if (!self.config) {
+    self.logger.warn('Configuration not yet loaded, loading now...');
+    self.configFile = this.commandRouter.pluginManager.getConfigurationFile(this.context, 'config.json');
+    self.getConf(self.configFile);
+  }
+
+  self.logger.info('Loading UI configuration files...');
   self.commandRouter
     .i18nJson(`${__dirname}/i18n/strings_${lang_code}.json`, `${__dirname}/i18n/strings_en.json`, `${__dirname}/UIConfig.json`)
     .then(function (uiconf) {
-      uiconf.sections[0].content[0].value = self.config.get('username');
-      uiconf.sections[0].content[1].value = self.config.get('password');
-      uiconf.sections[0].content[2].value = self.config.get('metadata_delay', DEFAULT_METADATA_DELAY);
+      self.logger.info('i18nJson loaded successfully, updating config values...');
+
+      // Ensure config values exist, use defaults if not
+      const username = self.config.get('username') || '';
+      const password = self.config.get('password') || '';
+      const metadataDelay = self.config.get('metadata_delay') || DEFAULT_METADATA_DELAY;
+
+      self.logger.info(`Config values - username: ${username ? 'set' : 'not set'}, password: ${password ? 'set' : 'not set'}, metadataDelay: ${metadataDelay}`);
+
+      // Update the UI config with current values
+      uiconf.sections[0].content[0].value = username;
+      uiconf.sections[0].content[1].value = password;
+      uiconf.sections[0].content[2].value = metadataDelay;
+
+      self.logger.info('UI config loaded successfully, resolving promise');
       defer.resolve(uiconf);
     })
     .fail(function (error) {
@@ -157,7 +179,27 @@ ControllerPlanetRadio.prototype.getUIConfig = function () {
         self.logger.error('UI config error stack trace:', error.stack);
       }
 
-      defer.reject(new Error('Failed to load UI configuration'));
+      // Try to load a basic UI config as fallback
+      self.logger.warn('Attempting to load basic UI config as fallback...');
+      try {
+        const basicConfig = fs.readJsonSync(`${__dirname}/UIConfig.json`);
+
+        // Ensure config values exist, use defaults if not
+        const username = self.config.get('username') || '';
+        const password = self.config.get('password') || '';
+        const metadataDelay = self.config.get('metadata_delay') || DEFAULT_METADATA_DELAY;
+
+        // Update the UI config with current values
+        basicConfig.sections[0].content[0].value = username;
+        basicConfig.sections[0].content[1].value = password;
+        basicConfig.sections[0].content[2].value = metadataDelay;
+
+        self.logger.info('Basic UI config loaded successfully as fallback');
+        defer.resolve(basicConfig);
+      } catch (fallbackError) {
+        self.logger.error('Fallback UI config also failed:', fallbackError.message);
+        defer.reject(new Error('Failed to load UI configuration'));
+      }
     });
 
   return defer.promise;
