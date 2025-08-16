@@ -90,7 +90,6 @@ module.exports = [
       // Async/await
       'no-async-promise-executor': 'error',
       'require-await': 'error',
-      'promise/prefer-await-to-then': 'error',
 
       // Volumio-specific
       'no-global-assign': 'error',

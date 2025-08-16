@@ -1,6 +1,7 @@
 'use strict';
 
 const axios = require('axios');
+const libQ = require('kew');
 
 const loginAPIOKResponse = 601;
 
@@ -17,34 +18,42 @@ class AuthManager {
    * Main authentication method
    * @param {string} username - User's email/username
    * @param {string} password - User's password
-   * @returns {Promise<string>} - Returns the user ID on successful authentication
+   * @returns {libQ.Promise<string>} - Returns the user ID on successful authentication
    */
-  async authenticate(username, password) {
+  authenticate(username, password) {
     const self = this;
+    const defer = libQ.defer();
 
     if (!username || !password) {
-      throw new Error('Username and password are required');
+      defer.reject(new Error('Username and password are required'));
+      return defer.promise;
     }
 
     // Check if already authenticated and token is still valid
     if (self.isAuthenticated()) {
       self.logger.info('User already authenticated, returning existing user ID');
-      return self.userId;
+      defer.resolve(self.userId);
+      return defer.promise;
     }
 
     self.logger.info('Starting authentication process');
 
-    try {
-      // First get the CSRF token
-      const csrfData = await self._getCsrfToken();
-      await self._performLogin(username, password, csrfData);
+    // First get the CSRF token
+    self
+      ._getCsrfToken()
+      .then(function (csrfData) {
+        return self._performLogin(username, password, csrfData);
+      })
+      .then(function () {
+        self.logger.info(`Authentication successful, user ID: ${self.userId}`);
+        defer.resolve(self.userId);
+      })
+      .fail(function (error) {
+        self.logger.error(`Authentication failed: ${error.message}`);
+        defer.reject(error);
+      });
 
-      self.logger.info(`Authentication successful, user ID: ${self.userId}`);
-      return self.userId;
-    } catch (error) {
-      self.logger.error(`Authentication failed: ${error.message}`);
-      throw error;
-    }
+    return defer.promise;
   }
 
   /**
@@ -93,38 +102,52 @@ class AuthManager {
   /**
    * Get CSRF token from the authentication endpoint
    * @private
-   * @returns {Promise<Object>} - CSRF token data
+   * @returns {libQ.Promise<Object>} - CSRF token data
    */
-  async _getCsrfToken() {
+  _getCsrfToken() {
     const self = this;
+    const defer = libQ.defer();
 
     self.logger.info('Making CSRF token request to: https://account.planetradio.co.uk/ajax/process-account/');
 
-    const response = await axios.post('https://account.planetradio.co.uk/ajax/process-account/');
-    self.logger.info(`CSRF Response Status: ${response.status}`);
-    self.logger.info(`CSRF Response Headers: ${JSON.stringify(response.headers, null, 2)}`);
-    self.logger.info(`CSRF Response Body: ${JSON.stringify(response.data, null, 2)}`);
+    // Convert axios promise to libQ promise
+    const axiosPromise = axios.post('https://account.planetradio.co.uk/ajax/process-account/');
 
-    // Get CSRF token from header
-    const csrfHeader = response.headers['x-csrf-token'];
-    if (!csrfHeader) {
-      throw new Error('Could not find CSRF token in headers');
-    }
+    axiosPromise
+      .then(function (response) {
+        self.logger.info(`CSRF Response Status: ${response.status}`);
+        self.logger.info(`CSRF Response Headers: ${JSON.stringify(response.headers, null, 2)}`);
+        self.logger.info(`CSRF Response Body: ${JSON.stringify(response.data, null, 2)}`);
 
-    try {
-      const csrfData = JSON.parse(csrfHeader);
-      if (!csrfData.csrf_name || !csrfData.csrf_value) {
-        throw new Error('Invalid CSRF token format');
-      }
+        // Get CSRF token from header
+        const csrfHeader = response.headers['x-csrf-token'];
+        if (!csrfHeader) {
+          defer.reject(new Error('Could not find CSRF token in headers'));
+          return;
+        }
 
-      return {
-        csrfData,
-        cookies: response.headers['set-cookie'],
-      };
-    } catch (error) {
-      self.logger.error(`Failed to parse CSRF token: ${error.message}`);
-      throw error;
-    }
+        try {
+          const csrfData = JSON.parse(csrfHeader);
+          if (!csrfData.csrf_name || !csrfData.csrf_value) {
+            defer.reject(new Error('Invalid CSRF token format'));
+            return;
+          }
+
+          defer.resolve({
+            csrfData,
+            cookies: response.headers['set-cookie'],
+          });
+        } catch (error) {
+          self.logger.error(`Failed to parse CSRF token: ${error.message}`);
+          defer.reject(error);
+        }
+      })
+      .catch(function (error) {
+        self.logger.error(`CSRF token request failed: ${error.message}`);
+        defer.reject(error);
+      });
+
+    return defer.promise;
   }
 
   /**
@@ -133,10 +156,11 @@ class AuthManager {
    * @param {string} username - User's email/username
    * @param {string} password - User's password
    * @param {Object} csrfInfo - CSRF token data and cookies
-   * @returns {Promise<void>}
+   * @returns {libQ.Promise<void>}
    */
-  async _performLogin(username, password, csrfInfo) {
+  _performLogin(username, password, csrfInfo) {
     const self = this;
+    const defer = libQ.defer();
 
     const loginData = {
       processmode: 'login',
@@ -165,7 +189,8 @@ class AuthManager {
       )}`
     );
 
-    const loginResponse = await axios.post('https://account.planetradio.co.uk/ajax/process-account/', formData, {
+    // Convert axios promise to libQ promise
+    const axiosPromise = axios.post('https://account.planetradio.co.uk/ajax/process-account/', formData, {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'X-CSRF-Token': JSON.stringify(csrfInfo.csrfData),
@@ -173,45 +198,55 @@ class AuthManager {
       },
     });
 
-    self.logger.info(`Login Response Status: ${loginResponse.status}`);
-    self.logger.info(`Login Response Headers: ${JSON.stringify(loginResponse.headers, null, 2)}`);
-    self.logger.info(`Login Response Body: ${JSON.stringify(loginResponse.data, null, 2)}`);
+    axiosPromise
+      .then(function (loginResponse) {
+        self.logger.info(`Login Response Status: ${loginResponse.status}`);
+        self.logger.info(`Login Response Headers: ${JSON.stringify(loginResponse.headers, null, 2)}`);
+        self.logger.info(`Login Response Body: ${JSON.stringify(loginResponse.data, null, 2)}`);
 
-    if (loginResponse.data && loginResponse.data.status === loginAPIOKResponse) {
-      self.csrfToken = csrfInfo.csrfData.csrf_value;
+        if (loginResponse.data && loginResponse.data.status === loginAPIOKResponse) {
+          self.csrfToken = csrfInfo.csrfData.csrf_value;
 
-      // Find the specific JWT cookie we need
-      const cookies = loginResponse.headers['set-cookie'];
-      let jwtCookie = null;
+          // Find the specific JWT cookie we need
+          const cookies = loginResponse.headers['set-cookie'];
+          let jwtCookie = null;
 
-      if (Array.isArray(cookies)) {
-        jwtCookie = cookies.find(function (cookie) {
-          return cookie.startsWith('jwt-radio-uk-sso-uk_radio=') && !cookie.includes('deleted');
-        });
-      }
+          if (Array.isArray(cookies)) {
+            jwtCookie = cookies.find(function (cookie) {
+              return cookie.startsWith('jwt-radio-uk-sso-uk_radio=') && !cookie.includes('deleted');
+            });
+          }
 
-      if (!jwtCookie) {
-        throw new Error('Could not find valid JWT cookie in response');
-      }
+          if (!jwtCookie) {
+            defer.reject(new Error('Could not find valid JWT cookie in response'));
+            return;
+          }
 
-      self.sessionCookie = jwtCookie;
+          self.sessionCookie = jwtCookie;
 
-      // Extract user ID from JWT token
-      const jwtPayload = self._extractJwtPayload([jwtCookie]);
-      if (jwtPayload && jwtPayload.id) {
-        self.userId = jwtPayload.id;
-        self.jwtExpiry = jwtPayload.exp ? jwtPayload.exp * 1000 : null; // Convert to milliseconds
-        self.logger.info(`Successfully extracted user ID: ${self.userId}`);
-        if (self.jwtExpiry) {
-          self.logger.info(`JWT token expires at: ${new Date(self.jwtExpiry).toISOString()}`);
+          // Extract user ID from JWT token
+          const jwtPayload = self._extractJwtPayload([jwtCookie]);
+          if (jwtPayload && jwtPayload.id) {
+            self.userId = jwtPayload.id;
+            self.jwtExpiry = jwtPayload.exp ? jwtPayload.exp * 1000 : null; // Convert to milliseconds
+            self.logger.info(`Successfully extracted user ID: ${self.userId}`);
+            if (self.jwtExpiry) {
+              self.logger.info(`JWT token expires at: ${new Date(self.jwtExpiry).toISOString()}`);
+            }
+            defer.resolve();
+          } else {
+            defer.reject(new Error('Failed to extract user ID from JWT token'));
+          }
+        } else {
+          defer.reject(new Error(`Login failed: ${JSON.stringify(loginResponse.data)}`));
         }
-        return;
-      } else {
-        throw new Error('Failed to extract user ID from JWT token');
-      }
-    } else {
-      throw new Error(`Login failed: ${JSON.stringify(loginResponse.data)}`);
-    }
+      })
+      .catch(function (error) {
+        self.logger.error(`Login request failed: ${error.message}`);
+        defer.reject(error);
+      });
+
+    return defer.promise;
   }
 
   /**

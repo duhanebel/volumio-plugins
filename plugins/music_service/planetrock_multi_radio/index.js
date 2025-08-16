@@ -1,5 +1,4 @@
 'use strict';
-/* eslint-disable promise/prefer-await-to-then */
 
 const libQ = require('kew');
 const fs = require('fs-extra');
@@ -56,6 +55,9 @@ ControllerPlanetRadio.prototype.onStart = function () {
   const self = this;
   self.mpdPlugin = this.commandRouter.pluginManager.getPlugin('music_service', 'mpd');
   self.serviceName = SERVICE_NAME;
+
+  // Initialize metadata timing flag
+  self.isFirstTimeMetadata = true;
 
   self.addToBrowseSources();
   return libQ.resolve();
@@ -233,11 +235,9 @@ ControllerPlanetRadio.prototype.handleBrowseUri = function (curUri) {
     // User selected a related station, fetch its info and resolve stream URL
     const stationCode = curUri.split('/')[1];
 
-    // Use StationManager to get station info (convert native Promise to libQ promise)
-    const stationInfoPromise = self.stationManager.getStationInfo(stationCode);
-    const libQPromise = libQ.defer();
-
-    stationInfoPromise
+    // Use StationManager to get station info (now returns libQ promise directly)
+    return self.stationManager
+      .getStationInfo(stationCode)
       .then(function (stationInfo) {
         // Return a single playable item
         const item = {
@@ -265,9 +265,9 @@ ControllerPlanetRadio.prototype.handleBrowseUri = function (curUri) {
           },
         };
 
-        libQPromise.resolve(result);
+        return result;
       })
-      .catch(function (error) {
+      .fail(function (error) {
         const errorMessage = error.message || 'Unknown error occurred';
         self.logger.error(`Failed to resolve station info for ${stationCode}: ${errorMessage}`);
 
@@ -278,15 +278,8 @@ ControllerPlanetRadio.prototype.handleBrowseUri = function (curUri) {
 
         self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_STREAMING'));
 
-        // Only reject if not already resolved
-        if (libQPromise.promise._state === 'pending') {
-          libQPromise.reject(error);
-        } else {
-          self.logger.warn('Promise already resolved, skipping reject');
-        }
+        throw error; // Re-throw to be caught by the promise chain
       });
-
-    return libQPromise.promise;
   } else if (curUri === 'planetradio') {
     // getRootContent() already returns a libQ promise, so we can use it directly
     return self.getRootContent();
@@ -331,7 +324,6 @@ ControllerPlanetRadio.prototype.updateConfig = function (data) {
 
 ControllerPlanetRadio.prototype.authenticate = function () {
   const self = this;
-  const defer = libQ.defer();
 
   // Check if we have credentials
   const username = self.config.get('username');
@@ -339,22 +331,19 @@ ControllerPlanetRadio.prototype.authenticate = function () {
 
   if (!username || !password) {
     self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_NO_CREDENTIALS'));
-    defer.reject(new Error(self.getRadioI18nString('ERROR_NO_CREDENTIALS')));
-    return defer.promise;
+    return libQ.reject(new Error(self.getRadioI18nString('ERROR_NO_CREDENTIALS')));
   }
 
   self.logger.info('Starting authentication with AuthManager...');
 
-  // Use AuthManager to handle authentication (convert native Promise to libQ promise)
-  const authPromise = self.authManager.authenticate(username, password);
-  const libQPromise = libQ.defer();
-
-  authPromise
+  // Use AuthManager to handle authentication (now returns libQ promise directly)
+  return self.authManager
+    .authenticate(username, password)
     .then(function (userId) {
       self.logger.info(`AuthManager authentication successful, user ID: ${userId}`);
-      libQPromise.resolve(userId);
+      return userId;
     })
-    .catch(function (error) {
+    .fail(function (error) {
       const errorMessage = error.message || 'Unknown authentication error';
       self.logger.error(`Authentication failed: ${errorMessage}`);
 
@@ -365,15 +354,8 @@ ControllerPlanetRadio.prototype.authenticate = function () {
 
       self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_INVALID_CREDENTIALS'));
 
-      // Only reject if not already resolved
-      if (libQPromise.promise._state === 'pending') {
-        libQPromise.reject(new Error(self.getRadioI18nString('ERROR_INVALID_CREDENTIALS')));
-      } else {
-        self.logger.warn('Promise already resolved, skipping reject');
-      }
+      throw error; // Re-throw to be caught by the promise chain
     });
-
-  return libQPromise.promise;
 };
 
 ControllerPlanetRadio.prototype.getRootContent = function () {
@@ -381,11 +363,9 @@ ControllerPlanetRadio.prototype.getRootContent = function () {
 
   self.logger.info('Getting root content - fetching stations...');
 
-  // Use StationManager to get stations (convert native Promise to libQ promise)
-  const stationsPromise = self.stationManager.getStations();
-  const libQPromise = libQ.defer();
-
-  stationsPromise
+  // Use StationManager to get stations (now returns libQ promise directly)
+  return self.stationManager
+    .getStations()
     .then(function (stations) {
       self.logger.info(`Stations received in getRootContent: ${stations.length} stations`);
       const result = {
@@ -401,9 +381,9 @@ ControllerPlanetRadio.prototype.getRootContent = function () {
         },
       };
       self.logger.info('Root content result created successfully');
-      libQPromise.resolve(result);
+      return result;
     })
-    .catch(function (error) {
+    .fail(function (error) {
       const errorMessage = error.message || 'Unknown error occurred';
       self.logger.error(`Failed to get root content: ${errorMessage}`);
 
@@ -414,15 +394,8 @@ ControllerPlanetRadio.prototype.getRootContent = function () {
 
       self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_STREAMING'));
 
-      // Only reject if not already resolved
-      if (libQPromise.promise._state === 'pending') {
-        libQPromise.reject(error);
-      } else {
-        self.logger.warn('Promise already resolved, skipping reject');
-      }
+      throw error; // Re-throw to be caught by the promise chain
     });
-
-  return libQPromise.promise;
 };
 
 ControllerPlanetRadio.prototype.explodeUri = function (uri) {
@@ -435,13 +408,9 @@ ControllerPlanetRadio.prototype.explodeUri = function (uri) {
 
     self.logger.info(`Extracted station code: ${stationCode}`);
 
-    // Use StationManager to get station info (convert native Promise to libQ promise)
-    const stationInfoPromise = self.stationManager.getStationInfo(stationCode);
-    const libQPromise = libQ.defer();
-
-    self.logger.info(`Calling getStationInfo for station code: ${stationCode}`);
-
-    stationInfoPromise
+    // Use StationManager to get station info (now returns libQ promise directly)
+    return self.stationManager
+      .getStationInfo(stationCode)
       .then(function (stationInfo) {
         self.logger.info(`Station info received in explodeUri: ${JSON.stringify(stationInfo)}`);
         const track = {
@@ -456,9 +425,9 @@ ControllerPlanetRadio.prototype.explodeUri = function (uri) {
         };
 
         self.logger.info(`Created track object: ${JSON.stringify(track)}`);
-        libQPromise.resolve(track);
+        return track;
       })
-      .catch(function (error) {
+      .fail(function (error) {
         const errorMessage = error.message || 'Unknown error occurred';
         self.logger.error(`Failed to explode URI ${uri}: ${errorMessage}`);
 
@@ -469,15 +438,8 @@ ControllerPlanetRadio.prototype.explodeUri = function (uri) {
 
         self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_STREAMING'));
 
-        // Only reject if not already resolved
-        if (libQPromise.promise._state === 'pending') {
-          libQPromise.reject(error);
-        } else {
-          self.logger.warn('Promise already resolved, skipping reject');
-        }
+        throw error; // Re-throw to be caught by the promise chain
       });
-
-    return libQPromise.promise;
   } else {
     // Return rejected promise for invalid URI
     const defer = libQ.defer();
@@ -512,51 +474,20 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
 
       self.logger.info(`Getting station info for station code: ${stationCode}`);
 
-      // Get station info and store it (convert native Promise to libQ promise)
-      const stationInfoPromise = self.stationManager.getStationInfo(stationCode);
-      const libQPromise = libQ.defer();
-
-      stationInfoPromise
-        .then(function (stationInfo) {
-          self.logger.info(`Station info received: ${JSON.stringify(stationInfo)}`);
-          self.currentStationInfo = stationInfo;
-          libQPromise.resolve(stationInfo);
-        })
-        .catch(function (error) {
-          self.logger.error(`Failed to get station info: ${error.message}`);
-          if (libQPromise.promise._state === 'pending') {
-            libQPromise.reject(error);
-          } else {
-            self.logger.warn('Promise already resolved, skipping reject');
-          }
-        });
-
-      return libQPromise.promise;
+      // Get station info and store it (now returns libQ promise directly)
+      return self.stationManager.getStationInfo(stationCode);
     })
     .then(function (stationInfo) {
+      self.logger.info(`Station info received: ${JSON.stringify(stationInfo)}`);
+      self.currentStationInfo = stationInfo;
+
       self.logger.info(`Getting streaming URL for station: ${stationInfo.code}`);
 
-      // Get streaming URL (convert native Promise to libQ promise)
-      const streamingUrlPromise = self.stationManager.getStreamingURL(stationInfo.code);
-      const libQPromise = libQ.defer();
-
-      streamingUrlPromise
-        .then(function (streamUrl) {
-          self.logger.info(`Streaming URL received: ${streamUrl}`);
-          libQPromise.resolve(streamUrl);
-        })
-        .catch(function (error) {
-          self.logger.error(`Failed to get streaming URL: ${error.message}`);
-          if (libQPromise.promise._state === 'pending') {
-            libQPromise.reject(error);
-          } else {
-            self.logger.warn('Promise already resolved, skipping reject');
-          }
-        });
-
-      return libQPromise.promise;
+      // Get streaming URL (now returns libQ promise directly)
+      return self.stationManager.getStreamingURL(stationInfo.code);
     })
     .then(function (streamUrl) {
+      self.logger.info(`Streaming URL received: ${streamUrl}`);
       self.logger.info('Creating streaming proxy...');
 
       // Create the appropriate streaming proxy using the factory method
@@ -633,22 +564,39 @@ ControllerPlanetRadio.prototype.pushSongState = function (metadata) {
     clearTimeout(self.metadataUpdateTimer);
   }
 
-  // Get metadata delay from config
-  const metadataDelay = self.config.get('metadata_delay', DEFAULT_METADATA_DELAY);
+  // Check if this is the first time metadata is being pushed
+  if (self.isFirstTimeMetadata) {
+    // First time - update immediately, no delay
+    self.logger.info('First time metadata - updating immediately');
+    self.isFirstTimeMetadata = false; // Set flag to false for subsequent calls
 
-  // Set delay for metadata update
-  self.metadataUpdateTimer = setTimeout(function () {
-    self.logger.info('pushSongState called. Fetching MPD status...');
     self
       .pushSongStateImmediate(metadata)
       .then(function () {
-        // Success - metadata updated
+        // Success - metadata updated immediately
+        self.logger.info('First metadata update completed immediately');
       })
       .fail(function (error) {
-        self.logger.warn('Non-critical error in pushSongState:', error.message);
-        // Continue with basic metadata even if MPD status fails
+        self.logger.warn('Non-critical error in first metadata update:', error.message);
       });
-  }, metadataDelay * 1000);
+  } else {
+    // Subsequent calls - use delay
+    const metadataDelay = self.config.get('metadata_delay', DEFAULT_METADATA_DELAY);
+    self.logger.info(`Subsequent metadata update - using ${metadataDelay}s delay`);
+
+    self.metadataUpdateTimer = setTimeout(function () {
+      self.logger.info('Metadata update timer triggered. Fetching MPD status...');
+      self
+        .pushSongStateImmediate(metadata)
+        .then(function () {
+          // Success - metadata updated after delay
+        })
+        .fail(function (error) {
+          self.logger.warn('Non-critical error in pushSongState:', error.message);
+          // Continue with basic metadata even if MPD status fails
+        });
+    }, metadataDelay * 1000);
+  }
 };
 
 ControllerPlanetRadio.prototype.pushSongStateImmediate = function (metadata) {
@@ -737,6 +685,10 @@ ControllerPlanetRadio.prototype.stop = function () {
       // Always perform cleanup regardless of MPD command success/failure
       self.updateVolumioState({ status: 'stop' });
       self._cleanupResources();
+
+      // Reset metadata timing flag for next playback
+      self.isFirstTimeMetadata = true;
+
       defer.resolve();
     });
 
