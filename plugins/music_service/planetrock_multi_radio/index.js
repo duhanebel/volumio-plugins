@@ -113,7 +113,6 @@ ControllerPlanetRadio.prototype._cleanupResources = function () {
 
   self.isFirstTimeMetadata = true;
 
-
   self.logger.info('Centralized resource cleanup completed');
 };
 
@@ -700,7 +699,8 @@ ControllerPlanetRadio.prototype.stop = function () {
     })
     .then(function () {
       self.logger.info('MPD playback stopped successfully');
-    }).then(function () {
+    })
+    .then(function () {
       // Always perform cleanup regardless of MPD command success/failure
       self.updateVolumioState({ status: 'stop' });
       self._cleanupResources();

@@ -6,6 +6,8 @@ const axios = require('axios');
 // Constants
 const RETRY_DELAY = 1000;
 const HTTP_OK = 200;
+const REFRESH_RETRY_DELAY = 2000;
+const SEGMENT_BUFFER_RATIO = 0.75; // Start next segment at 75% of current segment duration
 
 /**
  * Streaming proxy for HLS/M3U8 streams
@@ -21,6 +23,7 @@ class M3U8StreamingProxy extends StreamingProxy {
     this.currentHlsSegments = null;
     this.currentHlsSegmentIndex = null;
     this.lastHlsMetadataUrl = null;
+    this.currentMediaPlaylistUrl = null;
   }
 
   async handleStream(playlistUrl, res) {
@@ -43,6 +46,9 @@ class M3U8StreamingProxy extends StreamingProxy {
 
       // Use the resolved media playlist URL or the original URL if not a master playlist
       const finalPlaylistUrl = mediaPlaylistUrl || authenticatedStreamUrl;
+
+      // Store the media playlist URL for refresh operations
+      self.currentMediaPlaylistUrl = finalPlaylistUrl;
 
       // Fetch and parse the media playlist
       const autheticatedFilanPlaylistUrl = self.addAuthParamsCallback(finalPlaylistUrl);
@@ -263,14 +269,37 @@ class M3U8StreamingProxy extends StreamingProxy {
           // Check if we need to refresh the playlist
           if (currentIndex >= segments.length) {
             self.logger.info('Reached end of playlist, refreshing...');
-            self.refreshHlsPlaylist(self.currentStreamUrl, segments, res, newSegmentsCount => {
+            self.refreshHlsPlaylist(self.currentMediaPlaylistUrl, segments, res, newSegmentsCount => {
               if (newSegmentsCount > 0) {
                 self.logger.info(`Added ${newSegmentsCount} new segments to playlist`);
+                // Continue streaming with the new segments
+                streamNextSegment();
+              } else {
+                self.logger.info('No new segments available, waiting before next refresh...');
+                // Wait a bit and try to refresh again
+                setTimeout(() => {
+                  if (isStreaming) {
+                    streamNextSegment();
+                  }
+                }, REFRESH_RETRY_DELAY);
               }
             });
           } else {
-            // Schedule next segment
-            setTimeout(streamNextSegment, segment.duration * 1000);
+            // Start buffering next segment early to reduce gaps
+            const nextSegment = segments[currentIndex];
+            if (nextSegment) {
+              // Start buffering the next segment when current segment is 75% complete
+              const bufferDelay = Math.max(100, segment.duration * 1000 * SEGMENT_BUFFER_RATIO);
+              self.logger.info(`Scheduling next segment buffering in ${bufferDelay}ms`);
+              setTimeout(() => {
+                if (isStreaming) {
+                  streamNextSegment();
+                }
+              }, bufferDelay);
+            } else {
+              // Fallback to normal timing
+              setTimeout(streamNextSegment, segment.duration * 1000);
+            }
           }
         });
 
@@ -323,15 +352,28 @@ class M3U8StreamingProxy extends StreamingProxy {
       // Note: We don't update metadata here as it might cause flickering
       // Metadata updates are handled when the playlist is initially fetched
 
-      // Find which segments are new (not already in currentSegments)
-      const currentSegmentUrls = new Set(currentSegments.map(seg => seg.segmentUrl));
+      // For live streaming, we need to handle overlapping segments
+      // The server might return some of the same segments plus new ones
 
-      // Find segments that are in the new playlist but not in the current one
-      const segmentsToAdd = newSegments.filter(segment => !currentSegmentUrls.has(segment.segmentUrl));
+      // Find the last segment we currently have
+      const lastCurrentSegment = currentSegments[currentSegments.length - 1];
+      let startIndex = 0;
 
-      self.logger.info(`Found ${segmentsToAdd.length} new segments to add`);
+      if (lastCurrentSegment) {
+        // Find where the new playlist starts relative to our current position
+        const lastSegmentIndex = newSegments.findIndex(seg => seg.segmentUrl === lastCurrentSegment.segmentUrl);
+        if (lastSegmentIndex >= 0) {
+          // Start adding from the segment after the last one we have
+          startIndex = lastSegmentIndex + 1;
+        }
+      }
 
-      // Add only the new segments to the current playlist
+      // Add all segments from the start index onwards
+      const segmentsToAdd = newSegments.slice(startIndex);
+
+      self.logger.info(`Found ${segmentsToAdd.length} new segments to add (starting from index ${startIndex})`);
+
+      // Add the new segments to the current playlist
       segmentsToAdd.forEach(segment => currentSegments.push(segment));
 
       // Call the callback with the number of new segments added
@@ -368,6 +410,7 @@ class M3U8StreamingProxy extends StreamingProxy {
     self.currentHlsSegments = null;
     self.currentHlsSegmentIndex = null;
     self.lastHlsMetadataUrl = null;
+    self.currentMediaPlaylistUrl = null;
 
     // Call parent stop method
     super.stop();
