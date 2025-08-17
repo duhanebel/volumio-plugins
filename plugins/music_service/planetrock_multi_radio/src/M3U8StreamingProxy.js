@@ -127,12 +127,6 @@ class M3U8StreamingProxy extends StreamingProxy {
 
       const segments = self.parseM3u8Playlist(response.data);
 
-      // Extract metadata from the first segment if available
-      if (segments.length > 0 && segments[0].metadataUrl) {
-        self.logger.info(`Fetching metadata from first segment: ${segments[0].metadataUrl}`);
-        await self.fetchAndUpdateMetadata(segments[0].metadataUrl, 'first segment');
-      }
-
       return segments;
     } catch (error) {
       self.logger.error(`Failed to fetch M3U8 playlist: ${error.message}`);
@@ -254,11 +248,8 @@ class M3U8StreamingProxy extends StreamingProxy {
       const segment = segments[currentIndex];
       self.logger.info(`Streaming HLS segment ${currentIndex + 1}/${segments.length}: ${segment.segmentUrl}`);
 
-      // Check for metadata updates from this segment
-      if (segment.metadataUrl && currentIndex === 0) {
-        // Only fetch metadata from the first segment to avoid spam
-        await self.fetchAndUpdateMetadata(segment.metadataUrl, 'segment');
-      }
+      // Don't fetch metadata here - we'll fetch it when the segment actually starts playing
+      // This prevents fetching metadata for segments that might not be played
 
       // Use the callback to add authentication parameters
       const authenticatedSegmentUrl = self.addAuthParamsCallback(new URL(segment.segmentUrl));
@@ -277,6 +268,21 @@ class M3U8StreamingProxy extends StreamingProxy {
         // Handle segment end - this is more reliable than setTimeout
         response.data.on('end', () => {
           self.logger.info(`HLS segment ${currentIndex + 1} completed`);
+          
+          // Fetch metadata for the next segment before it starts playing
+          const nextIndex = currentIndex + 1;
+          if (nextIndex < segments.length) {
+            const nextSegment = segments[nextIndex];
+            if (nextSegment && nextSegment.metadataUrl) {
+              self.logger.info(`Fetching metadata for next segment: ${nextSegment.metadataUrl}`);
+              // Fetch metadata for the next segment as it's about to start playing
+              self.fetchAndUpdateMetadata(nextSegment.metadataUrl, 'next segment')
+                .catch(error => {
+                  self.logger.warn(`Failed to fetch metadata for next segment: ${error.message}`);
+                });
+            }
+          }
+          
           // Move to next segment with minimal delay to reduce gaps
           setTimeout(() => {
             currentIndex++;
@@ -301,6 +307,15 @@ class M3U8StreamingProxy extends StreamingProxy {
 
     // Start streaming
     streamNextSegment();
+    
+    // Fetch metadata for the first segment as it starts playing
+    if (segments.length > 0 && segments[0].metadataUrl) {
+      self.logger.info(`Fetching metadata for first segment: ${segments[0].metadataUrl}`);
+      self.fetchAndUpdateMetadata(segments[0].metadataUrl, 'first segment')
+        .catch(error => {
+          self.logger.warn(`Failed to fetch metadata for first segment: ${error.message}`);
+        });
+    }
 
     // Return cleanup function
     return () => {
@@ -330,10 +345,6 @@ class M3U8StreamingProxy extends StreamingProxy {
       }
 
       self.logger.info(`Refreshed playlist has ${newSegments.length} segments`);
-
-      // Check for metadata updates in the refreshed playlist
-      // Note: We don't update metadata here as it might cause flickering
-      // Metadata updates are handled when the playlist is initially fetched
 
       // For live streaming, we need to handle overlapping segments
       // The server might return some of the same segments plus new ones
@@ -370,6 +381,21 @@ class M3U8StreamingProxy extends StreamingProxy {
       const segmentsToAdd = newSegments.slice(startIndex);
 
       self.logger.info(`Found ${segmentsToAdd.length} new segments to add (starting from index ${startIndex})`);
+
+      // Check for metadata updates in the new segments
+      // For live radio, we need to update metadata when new segments come in
+      if (segmentsToAdd.length > 0) {
+        // Check the first new segment for metadata updates
+        const firstNewSegment = segmentsToAdd[0];
+        if (firstNewSegment && firstNewSegment.metadataUrl) {
+          self.logger.info(`Checking for metadata updates in new segment: ${firstNewSegment.metadataUrl}`);
+          try {
+            await self.fetchAndUpdateMetadata(firstNewSegment.metadataUrl, 'playlist refresh');
+          } catch (error) {
+            self.logger.warn(`Failed to fetch metadata from new segment: ${error.message}`);
+          }
+        }
+      }
 
       // Add the new segments to the current playlist
       segmentsToAdd.forEach(segment => currentSegments.push(segment));

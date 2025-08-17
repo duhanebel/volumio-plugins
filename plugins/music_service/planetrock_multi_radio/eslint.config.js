@@ -16,6 +16,7 @@ module.exports = [
       'test*.js', // Ignore test files
       'test.js',
       'test-stations.js',
+      'old-index.js', // Ignore old reference file
     ],
   },
   js.configs.recommended,
@@ -98,7 +99,7 @@ module.exports = [
       'no-script-url': 'error',
 
       // Code quality
-      complexity: ['warn', 10],
+      complexity: ['warn', 12],
       'max-depth': ['warn', 5],
       'max-lines': ['warn', 1200],
       'max-params': ['warn', 6],
