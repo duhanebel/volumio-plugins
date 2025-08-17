@@ -6,8 +6,8 @@ const axios = require('axios');
 // Constants
 const RETRY_DELAY = 1000;
 const HTTP_OK = 200;
-const REFRESH_RETRY_DELAY = 2000;
-const SEGMENT_BUFFER_RATIO = 0.75; // Start next segment at 75% of current segment duration
+const SEGMENT_DURATION_TOLERANCE = 0.5; // Tolerance for segment duration matching (seconds)
+const SEGMENT_TRANSITION_DELAY = 50; // Delay between segments for smooth transition (ms)
 
 /**
  * Streaming proxy for HLS/M3U8 streams
@@ -232,12 +232,27 @@ class M3U8StreamingProxy extends StreamingProxy {
     let isStreaming = true;
 
     const streamNextSegment = async () => {
-      if (!isStreaming || currentIndex >= segments.length) {
+      if (!isStreaming) {
+        self.logger.info('HLS streaming stopped');
+        res.end();
+        return;
+      }
+
+      // If we've reached the end of segments, refresh the playlist
+      if (currentIndex >= segments.length) {
+        self.logger.info('Reached end of segments, refreshing playlist...');
+        self.refreshHlsPlaylist(self.currentMediaPlaylistUrl, segments, res, newSegmentsAdded => {
+          if (newSegmentsAdded > 0) {
+            self.logger.info(`Added ${newSegmentsAdded} new segments to playlist`);
+          }
+          // Always continue streaming after refresh
+          streamNextSegment();
+        });
         return;
       }
 
       const segment = segments[currentIndex];
-      self.logger.info(`Streaming segment ${currentIndex + 1} of ${segments.length}: ${segment.segmentUrl}`);
+      self.logger.info(`Streaming HLS segment ${currentIndex + 1}/${segments.length}: ${segment.segmentUrl}`);
 
       // Check for metadata updates from this segment
       if (segment.metadataUrl && currentIndex === 0) {
@@ -256,63 +271,31 @@ class M3U8StreamingProxy extends StreamingProxy {
           ...self.getCommonRequestOptions(),
         });
 
-        // M3U8 streams don't use EventSource for metadata
-        // Metadata comes from the playlist itself
-
         // Pipe the segment data
         response.data.pipe(res, { end: false });
 
-        // Handle segment end
+        // Handle segment end - this is more reliable than setTimeout
         response.data.on('end', () => {
-          currentIndex++;
-
-          // Check if we need to refresh the playlist
-          if (currentIndex >= segments.length) {
-            self.logger.info('Reached end of playlist, refreshing...');
-            self.refreshHlsPlaylist(self.currentMediaPlaylistUrl, segments, res, newSegmentsCount => {
-              if (newSegmentsCount > 0) {
-                self.logger.info(`Added ${newSegmentsCount} new segments to playlist`);
-                // Continue streaming with the new segments
-                streamNextSegment();
-              } else {
-                self.logger.info('No new segments available, waiting before next refresh...');
-                // Wait a bit and try to refresh again
-                setTimeout(() => {
-                  if (isStreaming) {
-                    streamNextSegment();
-                  }
-                }, REFRESH_RETRY_DELAY);
-              }
-            });
-          } else {
-            // Start buffering next segment early to reduce gaps
-            const nextSegment = segments[currentIndex];
-            if (nextSegment) {
-              // Start buffering the next segment when current segment is 75% complete
-              const bufferDelay = Math.max(100, segment.duration * 1000 * SEGMENT_BUFFER_RATIO);
-              self.logger.info(`Scheduling next segment buffering in ${bufferDelay}ms`);
-              setTimeout(() => {
-                if (isStreaming) {
-                  streamNextSegment();
-                }
-              }, bufferDelay);
-            } else {
-              // Fallback to normal timing
-              setTimeout(streamNextSegment, segment.duration * 1000);
-            }
-          }
+          self.logger.info(`HLS segment ${currentIndex + 1} completed`);
+          // Move to next segment with minimal delay to reduce gaps
+          setTimeout(() => {
+            currentIndex++;
+            streamNextSegment();
+          }, SEGMENT_TRANSITION_DELAY);
         });
 
         // Handle segment error
         response.data.on('error', error => {
-          self.handleStreamError(error, 'Segment streaming');
+          self.logger.error(`HLS segment error: ${error.message}`);
+          // Continue with next segment
           currentIndex++;
-          setTimeout(streamNextSegment, RETRY_DELAY); // Retry after 1 second
+          streamNextSegment();
         });
       } catch (error) {
-        self.handleStreamError(error, 'Segment fetch');
+        self.logger.error(`Failed to stream HLS segment: ${error.message}`);
+        // Continue with next segment
         currentIndex++;
-        setTimeout(streamNextSegment, RETRY_DELAY); // Retry after 1 second
+        setTimeout(streamNextSegment, RETRY_DELAY);
       }
     };
 
@@ -361,10 +344,25 @@ class M3U8StreamingProxy extends StreamingProxy {
 
       if (lastCurrentSegment) {
         // Find where the new playlist starts relative to our current position
+        // Try to match by URL first, then by duration if URL matching fails
         const lastSegmentIndex = newSegments.findIndex(seg => seg.segmentUrl === lastCurrentSegment.segmentUrl);
         if (lastSegmentIndex >= 0) {
           // Start adding from the segment after the last one we have
           startIndex = lastSegmentIndex + 1;
+        } else {
+          // URL matching failed, try to find a segment with similar duration
+          // This handles cases where the server returns the same content with different URLs
+          const lastSegmentDuration = lastCurrentSegment.duration;
+          const similarSegmentIndex = newSegments.findIndex(seg => Math.abs(seg.duration - lastSegmentDuration) < SEGMENT_DURATION_TOLERANCE);
+          if (similarSegmentIndex >= 0) {
+            startIndex = similarSegmentIndex + 1;
+            self.logger.info(`Found similar segment by duration at index ${similarSegmentIndex}`);
+          } else {
+            // If no matching found, assume we need to refresh the entire playlist
+            // This can happen when the server rotates segments
+            startIndex = 0;
+            self.logger.info('No matching segments found, refreshing entire playlist');
+          }
         }
       }
 
