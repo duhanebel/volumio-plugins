@@ -252,14 +252,35 @@ class M3U8StreamingProxy extends StreamingProxy {
       self.logger.info(`Streaming HLS segment ${currentIndex + 1}/${segments.length}: ${segment.segmentUrl}`);
 
       // Fetch metadata for this segment only if it's different from the last one
-      if (segment.metadataUrl && segment.metadataUrl !== 'https://listenapi.planetradio.co.uk/api9.2/eventdata/-1' && segment.metadataUrl !== lastMetadataUrl) {
-        self.logger.info(`Fetching new metadata from: ${segment.metadataUrl}`);
-        lastMetadataUrl = segment.metadataUrl;
+      if (segment.metadataUrl && segment.metadataUrl !== lastMetadataUrl) {
+        if (segment.metadataUrl.endsWith('/eventdata/-1')) {
+          self.logger.info('Received -1 event data URL, fetching show information');
+          // Use the same fallback strategy as DirectStreamingProxy
+          self
+            .fetchShowData(self.currentStationCode)
+            .then(metadata => {
+              if (self.onMetadataUpdate) {
+                self.onMetadataUpdate(metadata);
+              }
+            })
+            .catch(error => {
+              self.logger.error(`Failed to fetch show data: ${error.message}`);
+              // Fall back to default metadata
+              const defaultMetadata = self.createMetadataObject('Non stop music', 'Planet Rock', '', '');
+              if (self.onMetadataUpdate) {
+                self.onMetadataUpdate(defaultMetadata);
+              }
+            });
+          lastMetadataUrl = segment.metadataUrl;
+        } else if (segment.metadataUrl !== 'https://listenapi.planetradio.co.uk/api9.2/eventdata/-1') {
+          self.logger.info(`Fetching new metadata from: ${segment.metadataUrl}`);
+          lastMetadataUrl = segment.metadataUrl;
 
-        // Fetch and update metadata immediately (like the old working approach)
-        self.fetchAndUpdateMetadata(segment.metadataUrl, 'segment').catch(error => {
-          self.logger.error(`Failed to fetch segment metadata: ${error.message}`);
-        });
+          // Fetch and update metadata immediately (like the old working approach)
+          self.fetchAndUpdateMetadata(segment.metadataUrl, 'segment').catch(error => {
+            self.logger.error(`Failed to fetch segment metadata: ${error.message}`);
+          });
+        }
       } else if (segment.metadataUrl === lastMetadataUrl) {
         self.logger.info('Skipping metadata fetch - same URL as previous segment');
       }
@@ -310,6 +331,49 @@ class M3U8StreamingProxy extends StreamingProxy {
     return () => {
       isStreaming = false;
     };
+  }
+
+  /**
+   * Create metadata object (like the DirectStreamingProxy)
+   * @param {string} title - Track title
+   * @param {string} artist - Track artist
+   * @param {string} album - Track album
+   * @param {string} albumart - Album art URL
+   * @param {string} uri - Stream URI (optional)
+   * @returns {Object} - Metadata object
+   */
+  createMetadataObject(title, artist, album, albumart, uri) {
+    return {
+      title: title || 'Unknown Track',
+      artist: artist || 'Planet Rock',
+      album: album || '',
+      albumart: albumart || '/albumart?sourceicon=music_service/planetrock_multi_radio/assets/planetrock_multi_radio.webp',
+      uri: uri || `http://localhost:${this.proxyPort || '3000'}/stream`,
+    };
+  }
+
+  /**
+   * Fetch show data for station (like the DirectStreamingProxy)
+   * @param {string} stationCode - The station code
+   * @returns {Promise<Object>} - Promise resolving to show metadata
+   */
+  async fetchShowData(stationCode) {
+    const self = this;
+    const url = `https://listenapi.planetradio.co.uk/api9.2/stations_nowplaying/GB?StationCode%5B%5D=${stationCode}&premium=1`;
+
+    try {
+      const response = await axios.get(url);
+      self.logger.info(`Show data response: ${JSON.stringify(response.data, null, 2)}`);
+
+      if (response.data && response.data[0] && response.data[0].stationOnAir) {
+        const showData = response.data[0].stationOnAir;
+        return self.createMetadataObject(showData.episodeTitle, 'Planet Rock', showData.episodeDescription, showData.episodeImageUrl);
+      }
+      throw new Error('No show data available');
+    } catch (error) {
+      self.logger.error(`Failed to fetch show data: ${error.message}`);
+      return self.createMetadataObject('Non stop music', 'Planet Rock', '', '');
+    }
   }
 
   /**

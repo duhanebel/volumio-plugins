@@ -6,6 +6,7 @@ const axios = require('axios');
 // Constants
 const RETRY_DELAY = 1000;
 const HTTP_OK = 200;
+const HTTP_INTERNAL_SERVER_ERROR = 500;
 
 /**
  * Streaming proxy for direct AAC streams
@@ -65,7 +66,7 @@ class DirectStreamingProxy extends StreamingProxy {
       }
     };
 
-    self.eventSource.onmessage = async function (event) {
+    self.eventSource.onmessage = function (event) {
       try {
         self.logger.info(`Received raw EventSource message: ${event.data}`);
 
@@ -80,8 +81,29 @@ class DirectStreamingProxy extends StreamingProxy {
           self.logger.info(`Parsed metadata object: ${JSON.stringify(metadataObj, null, 2)}`);
 
           if (metadataObj.url) {
-            // Use the common metadata fetching method
-            await self.fetchAndUpdateMetadata(metadataObj.url, 'EventSource');
+            if (metadataObj.url.endsWith('/eventdata/-1')) {
+              self.logger.info('Received -1 event data URL, fetching show information');
+              self.fetchShowData(self.currentStationCode).then(metadata => self.updateMetadata(metadata));
+              return;
+            }
+
+            // Fetch track data from the API (like the old working version)
+            axios
+              .get(metadataObj.url)
+              .then(response => {
+                self.logger.info(`Track data response: ${JSON.stringify(response.data, null, 2)}`);
+
+                if (response.data) {
+                  const trackData = response.data;
+                  const metadata = self.createMetadataObject(trackData.eventSongTitle, trackData.eventSongArtist, '', trackData.eventImageUrl);
+                  self.updateMetadata(metadata);
+                }
+              })
+              .catch(error => {
+                self.logger.error(`Failed to fetch track data: ${error.message}`);
+                const metadata = self.createMetadataObject('Unknown Track', 'Planet Rock', '', '');
+                self.updateMetadata(metadata);
+              });
           }
         }
       } catch (error) {
@@ -108,6 +130,62 @@ class DirectStreamingProxy extends StreamingProxy {
   }
 
   /**
+   * Create metadata object (like the old working version)
+   * @param {string} title - Track title
+   * @param {string} artist - Track artist
+   * @param {string} album - Track album
+   * @param {string} albumart - Album art URL
+   * @param {string} uri - Stream URI (optional)
+   * @returns {Object} - Metadata object
+   */
+  createMetadataObject(title, artist, album, albumart, uri) {
+    return {
+      title: title || 'Unknown Track',
+      artist: artist || 'Planet Rock',
+      album: album || '',
+      albumart: albumart || '/albumart?sourceicon=music_service/planetrock_multi_radio/assets/planetrock_multi_radio.webp',
+      uri: uri || `http://localhost:${this.proxyPort || '3000'}/stream`,
+    };
+  }
+
+  /**
+   * Update metadata with delay logic (like the old working version)
+   * @param {Object} metadata - The metadata object to update
+   */
+  updateMetadata(metadata) {
+    const self = this;
+
+    // Use the common metadata update method from the base class
+    if (self.onMetadataUpdate) {
+      self.onMetadataUpdate(metadata);
+    }
+  }
+
+  /**
+   * Fetch show data for station (like the old working version)
+   * @param {string} stationCode - The station code
+   * @returns {Promise<Object>} - Promise resolving to show metadata
+   */
+  async fetchShowData(stationCode) {
+    const self = this;
+    const url = `https://listenapi.planetradio.co.uk/api9.2/stations_nowplaying/GB?StationCode%5B%5D=${stationCode}&premium=1`;
+
+    try {
+      const response = await axios.get(url);
+      self.logger.info(`Show data response: ${JSON.stringify(response.data, null, 2)}`);
+
+      if (response.data && response.data[0] && response.data[0].stationOnAir) {
+        const showData = response.data[0].stationOnAir;
+        return self.createMetadataObject(showData.episodeTitle, 'Planet Rock', showData.episodeDescription, showData.episodeImageUrl);
+      }
+      throw new Error('No show data available');
+    } catch (error) {
+      self.logger.error(`Failed to fetch show data: ${error.message}`);
+      return self.createMetadataObject('Non stop music', 'Planet Rock', '', '');
+    }
+  }
+
+  /**
    * Handle direct AAC streams
    * @param {URL} streamUrl - The stream URL object
    * @param {Object} res - HTTP response object
@@ -125,7 +203,11 @@ class DirectStreamingProxy extends StreamingProxy {
         method: 'get',
         url: authenticatedStreamUrl.toString(),
         responseType: 'stream',
-        ...self.getCommonRequestOptions(),
+        headers: {
+          Accept: '*/*',
+          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15',
+        },
+        httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false }),
       });
 
       self.logger.info(`Stream response received, status: ${response.status}`);
@@ -163,15 +245,13 @@ class DirectStreamingProxy extends StreamingProxy {
 
       // Handle stream error
       response.data.on('error', error => {
-        self.logger.error(`Stream data error: ${error.message}`);
-        self.handleStreamError(error, 'Direct stream', res);
+        self.logger.error(`Direct stream error: ${error}`);
+        res.end();
       });
     } catch (error) {
-      self.logger.error(`Failed to handle direct stream: ${error.message}`);
-      if (error.stack) {
-        self.logger.error('Error stack trace:', error.stack);
-      }
-      self.handleStreamError(error, 'Direct stream request', res);
+      self.logger.error(`Direct stream request error: ${error}`);
+      res.writeHead(HTTP_INTERNAL_SERVER_ERROR);
+      res.end();
     }
   }
 }
