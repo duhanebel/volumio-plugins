@@ -4,9 +4,8 @@ const StreamingProxy = require('./StreamingProxy');
 const axios = require('axios');
 
 // Constants
-const RETRY_DELAY = 1000;
+const RETRY_DELAY = 1000; // 1 second retry delay (same as old working version)
 const HTTP_OK = 200;
-const SEGMENT_DURATION_TOLERANCE = 0.5; // Tolerance for segment duration matching (seconds)
 const SEGMENT_TRANSITION_DELAY = 50; // Delay between segments for smooth transition (ms)
 
 /**
@@ -224,6 +223,8 @@ class M3U8StreamingProxy extends StreamingProxy {
     const self = this;
     let currentIndex = 0;
     let isStreaming = true;
+    let currentPlaylistUrl = null;
+    let lastMetadataUrl = null; // Track the last metadata URL to avoid duplicate fetches
 
     const streamNextSegment = async () => {
       if (!isStreaming) {
@@ -235,7 +236,9 @@ class M3U8StreamingProxy extends StreamingProxy {
       // If we've reached the end of segments, refresh the playlist
       if (currentIndex >= segments.length) {
         self.logger.info('Reached end of segments, refreshing playlist...');
-        self.refreshHlsPlaylist(self.currentMediaPlaylistUrl, segments, res, newSegmentsAdded => {
+        // Store the current playlist URL for refresh operations
+        currentPlaylistUrl = self.currentMediaPlaylistUrl;
+        self.refreshHlsPlaylist(currentPlaylistUrl, segments, res, newSegmentsAdded => {
           if (newSegmentsAdded > 0) {
             self.logger.info(`Added ${newSegmentsAdded} new segments to playlist`);
           }
@@ -248,8 +251,18 @@ class M3U8StreamingProxy extends StreamingProxy {
       const segment = segments[currentIndex];
       self.logger.info(`Streaming HLS segment ${currentIndex + 1}/${segments.length}: ${segment.segmentUrl}`);
 
-      // Don't fetch metadata here - we'll fetch it when the segment actually starts playing
-      // This prevents fetching metadata for segments that might not be played
+      // Fetch metadata for this segment only if it's different from the last one
+      if (segment.metadataUrl && segment.metadataUrl !== 'https://listenapi.planetradio.co.uk/api9.2/eventdata/-1' && segment.metadataUrl !== lastMetadataUrl) {
+        self.logger.info(`Fetching new metadata from: ${segment.metadataUrl}`);
+        lastMetadataUrl = segment.metadataUrl;
+
+        // Fetch and update metadata immediately (like the old working approach)
+        self.fetchAndUpdateMetadata(segment.metadataUrl, 'segment').catch(error => {
+          self.logger.error(`Failed to fetch segment metadata: ${error.message}`);
+        });
+      } else if (segment.metadataUrl === lastMetadataUrl) {
+        self.logger.info('Skipping metadata fetch - same URL as previous segment');
+      }
 
       // Use the callback to add authentication parameters
       const authenticatedSegmentUrl = self.addAuthParamsCallback(new URL(segment.segmentUrl));
@@ -268,21 +281,6 @@ class M3U8StreamingProxy extends StreamingProxy {
         // Handle segment end - this is more reliable than setTimeout
         response.data.on('end', () => {
           self.logger.info(`HLS segment ${currentIndex + 1} completed`);
-          
-          // Fetch metadata for the next segment before it starts playing
-          const nextIndex = currentIndex + 1;
-          if (nextIndex < segments.length) {
-            const nextSegment = segments[nextIndex];
-            if (nextSegment && nextSegment.metadataUrl) {
-              self.logger.info(`Fetching metadata for next segment: ${nextSegment.metadataUrl}`);
-              // Fetch metadata for the next segment as it's about to start playing
-              self.fetchAndUpdateMetadata(nextSegment.metadataUrl, 'next segment')
-                .catch(error => {
-                  self.logger.warn(`Failed to fetch metadata for next segment: ${error.message}`);
-                });
-            }
-          }
-          
           // Move to next segment with minimal delay to reduce gaps
           setTimeout(() => {
             currentIndex++;
@@ -307,15 +305,6 @@ class M3U8StreamingProxy extends StreamingProxy {
 
     // Start streaming
     streamNextSegment();
-    
-    // Fetch metadata for the first segment as it starts playing
-    if (segments.length > 0 && segments[0].metadataUrl) {
-      self.logger.info(`Fetching metadata for first segment: ${segments[0].metadataUrl}`);
-      self.fetchAndUpdateMetadata(segments[0].metadataUrl, 'first segment')
-        .catch(error => {
-          self.logger.warn(`Failed to fetch metadata for first segment: ${error.message}`);
-        });
-    }
 
     // Return cleanup function
     return () => {
@@ -346,56 +335,14 @@ class M3U8StreamingProxy extends StreamingProxy {
 
       self.logger.info(`Refreshed playlist has ${newSegments.length} segments`);
 
-      // For live streaming, we need to handle overlapping segments
-      // The server might return some of the same segments plus new ones
+      // Simple approach: just filter out existing segments by URL (like the old working version)
+      const currentSegmentUrls = new Set(currentSegments.map(seg => seg.segmentUrl));
+      const segmentsToAdd = newSegments.filter(segment => !currentSegmentUrls.has(segment.segmentUrl));
 
-      // Find the last segment we currently have
-      const lastCurrentSegment = currentSegments[currentSegments.length - 1];
-      let startIndex = 0;
+      self.logger.info(`Found ${segmentsToAdd.length} new segments to add`);
 
-      if (lastCurrentSegment) {
-        // Find where the new playlist starts relative to our current position
-        // Try to match by URL first, then by duration if URL matching fails
-        const lastSegmentIndex = newSegments.findIndex(seg => seg.segmentUrl === lastCurrentSegment.segmentUrl);
-        if (lastSegmentIndex >= 0) {
-          // Start adding from the segment after the last one we have
-          startIndex = lastSegmentIndex + 1;
-        } else {
-          // URL matching failed, try to find a segment with similar duration
-          // This handles cases where the server returns the same content with different URLs
-          const lastSegmentDuration = lastCurrentSegment.duration;
-          const similarSegmentIndex = newSegments.findIndex(seg => Math.abs(seg.duration - lastSegmentDuration) < SEGMENT_DURATION_TOLERANCE);
-          if (similarSegmentIndex >= 0) {
-            startIndex = similarSegmentIndex + 1;
-            self.logger.info(`Found similar segment by duration at index ${similarSegmentIndex}`);
-          } else {
-            // If no matching found, assume we need to refresh the entire playlist
-            // This can happen when the server rotates segments
-            startIndex = 0;
-            self.logger.info('No matching segments found, refreshing entire playlist');
-          }
-        }
-      }
-
-      // Add all segments from the start index onwards
-      const segmentsToAdd = newSegments.slice(startIndex);
-
-      self.logger.info(`Found ${segmentsToAdd.length} new segments to add (starting from index ${startIndex})`);
-
-      // Check for metadata updates in the new segments
-      // For live radio, we need to update metadata when new segments come in
-      if (segmentsToAdd.length > 0) {
-        // Check the first new segment for metadata updates
-        const firstNewSegment = segmentsToAdd[0];
-        if (firstNewSegment && firstNewSegment.metadataUrl) {
-          self.logger.info(`Checking for metadata updates in new segment: ${firstNewSegment.metadataUrl}`);
-          try {
-            await self.fetchAndUpdateMetadata(firstNewSegment.metadataUrl, 'playlist refresh');
-          } catch (error) {
-            self.logger.warn(`Failed to fetch metadata from new segment: ${error.message}`);
-          }
-        }
-      }
+      // No need to fetch metadata here - it will be fetched when segments start playing
+      // This keeps the refresh logic simple and focused
 
       // Add the new segments to the current playlist
       segmentsToAdd.forEach(segment => currentSegments.push(segment));
