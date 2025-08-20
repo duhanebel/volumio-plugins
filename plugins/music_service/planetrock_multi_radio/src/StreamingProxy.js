@@ -26,8 +26,8 @@ class StreamingProxy {
     this.onMetadataUpdate = null;
 
     // Current stream info
-    this.currentStreamUrl = null;
-    this.currentStationCode = null;
+    this.streamURL = null;
+    this.stationCode = null;
   }
 
   /**
@@ -49,8 +49,8 @@ class StreamingProxy {
     const defer = libQ.defer();
 
     // Store current stream info
-    self.currentStreamUrl = streamUrl;
-    self.currentStationCode = stationCode;
+    self.streamURL = streamUrl;
+    self.stationCode = stationCode;
 
     try {
       // Create the proxy server and find an available port
@@ -115,15 +115,16 @@ class StreamingProxy {
   async fetchMetadataFromUrl(metadataUrl) {
     const self = this;
 
-    // Skip the -1 event data URL (show information)
-    if (metadataUrl && metadataUrl.endsWith('/eventdata/-1')) {
-      self.logger.info('Skipping -1 event data URL, fetching show information');
-      return await self.fetchShowData(self.currentStationCode);
-    }
-
     if (!metadataUrl) {
       return null;
     }
+
+    // Skip the -1 event data URL (show information)
+    if (metadataUrl.endsWith('/eventdata/-1')) {
+      self.logger.info('Skipping -1 event data URL, fetching show information');
+      return await self.fetchShowData(self.stationCode);
+    }
+
 
     try {
       const response = await require('axios').get(metadataUrl);
@@ -137,7 +138,7 @@ class StreamingProxy {
     } catch (error) {
       self.logger.error(`Failed to fetch metadata from URL: ${error.message}`);
       // Fallback to show data
-      return await self.fetchShowData(self.currentStationCode);
+      return await self.fetchShowData(self.stationCode);
     }
   }
 
@@ -244,24 +245,22 @@ class StreamingProxy {
     const self = this;
     self.logger.info('Stopping streaming proxy and cleaning up resources');
 
-    // Stop the proxy server
-    if (self.proxyServer) {
-      self.proxyServer.close();
-      self.proxyServer = null;
-      self.proxyPort = null;
+    try {
+      // Stop the proxy server
+      if (self.proxyServer) {
+        self.proxyServer.close();
+        self.proxyServer = null;
+        self.proxyPort = null;
+      }
+
+      // Reset state
+      self.streamURL = null;
+      self.stationCode = null;
+
+      self.logger.info('Streaming proxy cleanup completed');
+    } catch (error) {
+      self.logger.error(`Error during streaming proxy cleanup: ${error.message}`);
     }
-
-    // Close EventSource connection
-    if (self.eventSource) {
-      self.eventSource.close();
-      self.eventSource = null;
-    }
-
-    // Reset state
-    self.currentStreamUrl = null;
-    self.currentStationCode = null;
-
-    self.logger.info('Streaming proxy cleanup completed');
   }
 }
 

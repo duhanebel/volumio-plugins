@@ -6,7 +6,6 @@ const axios = require('axios');
 // Constants
 const RETRY_DELAY = 1000;
 const HTTP_OK = 200;
-const HTTP_INTERNAL_SERVER_ERROR = 500;
 
 /**
  * Streaming proxy for direct AAC streams
@@ -54,11 +53,7 @@ class DirectStreamingProxy extends StreamingProxy {
 
     self.eventSource.onerror = function (error) {
       const timestamp = new Date().toISOString();
-      self.logger.error(`[${timestamp}] EventSource error details:`);
-      self.logger.error(`[${timestamp}] - Error object:`, JSON.stringify(error, null, 2));
-      self.logger.error(`[${timestamp}] - ReadyState:`, self.eventSource.readyState);
-      self.logger.error(`[${timestamp}] - URL:`, url);
-      self.logger.error(`[${timestamp}] - Headers:`, JSON.stringify(options.headers, null, 2));
+      self.logger.error(`[${timestamp}] EventSource error:`, JSON.stringify(error, null, 2));
 
       if (self.eventSource.readyState === require('eventsource').CLOSED) {
         self.logger.info(`[${timestamp}] Connection closed, attempting to reconnect in 1 second...`);
@@ -71,7 +66,6 @@ class DirectStreamingProxy extends StreamingProxy {
         self.logger.info(`Received raw EventSource message: ${event.data}`);
 
         const messageData = JSON.parse(event.data);
-        self.logger.info(`Parsed EventSource message: ${JSON.stringify(messageData, null, 2)}`);
 
         if (messageData['metadata-list'] && messageData['metadata-list'].length > 0) {
           const [{ metadata }] = messageData['metadata-list'];
@@ -81,34 +75,11 @@ class DirectStreamingProxy extends StreamingProxy {
           self.logger.info(`Parsed metadata object: ${JSON.stringify(metadataObj, null, 2)}`);
 
           if (metadataObj.url) {
-            if (metadataObj.url.endsWith('/eventdata/-1')) {
-              self.logger.info('Received -1 event data URL, fetching show information');
-              self.fetchShowData(self.currentStationCode).then(metadata => self.updateMetadata(metadata));
-              return;
-            }
-
-            // Fetch track data from the API (like the old working version)
-            axios
-              .get(metadataObj.url)
-              .then(response => {
-                self.logger.info(`Track data response: ${JSON.stringify(response.data, null, 2)}`);
-
-                if (response.data) {
-                  const trackData = response.data;
-                  const metadata = self.createMetadataObject(trackData.eventSongTitle, trackData.eventSongArtist, '', trackData.eventImageUrl);
-                  self.updateMetadata(metadata);
-                }
-              })
-              .catch(error => {
-                self.logger.error(`Failed to fetch track data: ${error.message}`);
-                const metadata = self.createMetadataObject('Unknown Track', 'Planet Rock', '', '');
-                self.updateMetadata(metadata);
-              });
+            self.fetchAndUpdateMetadata(metadataObj.url, 'EventSource');
           }
         }
       } catch (error) {
         self.logger.error(`Failed to parse EventSource message: ${error.message}`);
-        self.logger.error(`Raw message data: ${event.data}`);
       }
     };
   }
@@ -130,62 +101,6 @@ class DirectStreamingProxy extends StreamingProxy {
   }
 
   /**
-   * Create metadata object (like the old working version)
-   * @param {string} title - Track title
-   * @param {string} artist - Track artist
-   * @param {string} album - Track album
-   * @param {string} albumart - Album art URL
-   * @param {string} uri - Stream URI (optional)
-   * @returns {Object} - Metadata object
-   */
-  createMetadataObject(title, artist, album, albumart, uri) {
-    return {
-      title: title || 'Unknown Track',
-      artist: artist || 'Planet Rock',
-      album: album || '',
-      albumart: albumart || '/albumart?sourceicon=music_service/planetrock_multi_radio/assets/planetrock_multi_radio.webp',
-      uri: uri || `http://localhost:${this.proxyPort || '3000'}/stream`,
-    };
-  }
-
-  /**
-   * Update metadata with delay logic (like the old working version)
-   * @param {Object} metadata - The metadata object to update
-   */
-  updateMetadata(metadata) {
-    const self = this;
-
-    // Use the common metadata update method from the base class
-    if (self.onMetadataUpdate) {
-      self.onMetadataUpdate(metadata);
-    }
-  }
-
-  /**
-   * Fetch show data for station (like the old working version)
-   * @param {string} stationCode - The station code
-   * @returns {Promise<Object>} - Promise resolving to show metadata
-   */
-  async fetchShowData(stationCode) {
-    const self = this;
-    const url = `https://listenapi.planetradio.co.uk/api9.2/stations_nowplaying/GB?StationCode%5B%5D=${stationCode}&premium=1`;
-
-    try {
-      const response = await axios.get(url);
-      self.logger.info(`Show data response: ${JSON.stringify(response.data, null, 2)}`);
-
-      if (response.data && response.data[0] && response.data[0].stationOnAir) {
-        const showData = response.data[0].stationOnAir;
-        return self.createMetadataObject(showData.episodeTitle, 'Planet Rock', showData.episodeDescription, showData.episodeImageUrl);
-      }
-      throw new Error('No show data available');
-    } catch (error) {
-      self.logger.error(`Failed to fetch show data: ${error.message}`);
-      return self.createMetadataObject('Non stop music', 'Planet Rock', '', '');
-    }
-  }
-
-  /**
    * Handle direct AAC streams
    * @param {URL} streamUrl - The stream URL object
    * @param {Object} res - HTTP response object
@@ -194,20 +109,14 @@ class DirectStreamingProxy extends StreamingProxy {
     const self = this;
 
     try {
-      self.logger.info(`Starting direct stream handling for URL: ${streamUrl.toString()}`);
-
       const authenticatedStreamUrl = self.addAuthParamsCallback(streamUrl);
-      self.logger.info(`Authenticated stream URL: ${authenticatedStreamUrl.toString()}`);
+      self.logger.info(`Starting direct stream handling for URL: ${authenticatedStreamUrl.toString()}`);
 
       const response = await axios({
         method: 'get',
         url: authenticatedStreamUrl.toString(),
         responseType: 'stream',
-        headers: {
-          Accept: '*/*',
-          'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15',
-        },
-        httpsAgent: new (require('https').Agent)({ rejectUnauthorized: false }),
+        ...self.getCommonRequestOptions(),
       });
 
       self.logger.info(`Stream response received, status: ${response.status}`);
@@ -245,13 +154,18 @@ class DirectStreamingProxy extends StreamingProxy {
 
       // Handle stream error
       response.data.on('error', error => {
-        self.logger.error(`Direct stream error: ${error}`);
-        res.end();
+        self.handleStreamError(error, 'direct stream', res);
       });
     } catch (error) {
-      self.logger.error(`Direct stream request error: ${error}`);
-      res.writeHead(HTTP_INTERNAL_SERVER_ERROR);
-      res.end();
+      self.handleStreamError(error, 'direct stream', res);
+    }
+  }
+
+  stop() {
+    super.stop();
+    if (this.eventSource) {
+      this.eventSource.close();
+      this.eventSource = null;
     }
   }
 }

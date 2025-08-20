@@ -470,21 +470,27 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
     }
   }
 
-  // Stop any existing streaming proxy
-  if (self.streamingProxy) {
-    try {
-      self.streamingProxy.stop();
-      self.streamingProxy = null;
-    } catch (error) {
-      self.logger.warn('Error stopping existing streaming proxy:', error.message);
-    }
-  }
-
   // Reset metadata timing flag for new playback
   self.isFirstTimeMetadata = true;
 
   // First authenticate, then get streaming URL with parameters and start proxy
   self.logger.info('Starting clearAddPlayTrack - authenticating first...');
+
+  // Stop any existing streaming proxy
+  if (self.streamingProxy) {
+    try {
+      self.logger.info('Stopping existing streaming proxy...');
+      self.streamingProxy.stop();
+      self.streamingProxy = null;
+      self.logger.info('Existing streaming proxy stopped successfully');
+    } catch (error) {
+      self.logger.warn('Error stopping existing streaming proxy:', error.message);
+      // Force cleanup even if stop fails
+      self.streamingProxy = null;
+    }
+  }
+
+  // First authenticate, then get streaming URL with parameters and start proxy
   self
     .authenticate()
     .then(function (userId) {

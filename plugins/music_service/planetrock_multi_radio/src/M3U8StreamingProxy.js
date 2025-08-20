@@ -16,13 +16,12 @@ class M3U8StreamingProxy extends StreamingProxy {
     super(logger, addAuthParamsCallback);
 
     // HLS streaming state
-    this.hlsCleanupFunction = null;
-    this.hlsRefreshTimer = null;
     this.isHlsStreaming = false;
+    this.hlsRefreshTimer = null;
     this.currentHlsSegments = null;
-    this.currentHlsSegmentIndex = null;
     this.lastHlsMetadataUrl = null;
     this.currentMediaPlaylistUrl = null;
+    this.currentHlsResponse = null;
   }
 
   async handleStream(playlistUrl, res) {
@@ -41,17 +40,11 @@ class M3U8StreamingProxy extends StreamingProxy {
     try {
       const authenticatedStreamUrl = self.addAuthParamsCallback(playlistUrl);
       // First, try to resolve master playlist to get the media playlist URL
-      const mediaPlaylistUrl = await self.resolveMasterPlaylist(authenticatedStreamUrl);
 
-      // Use the resolved media playlist URL or the original URL if not a master playlist
-      const finalPlaylistUrl = mediaPlaylistUrl || authenticatedStreamUrl;
-
-      // Store the media playlist URL for refresh operations
-      self.currentMediaPlaylistUrl = finalPlaylistUrl;
+      self.currentMediaPlaylistUrl = await self.resolveMasterPlaylist(authenticatedStreamUrl);
 
       // Fetch and parse the media playlist
-      const autheticatedFilanPlaylistUrl = self.addAuthParamsCallback(finalPlaylistUrl);
-      const segments = await self.fetchM3u8Playlist(autheticatedFilanPlaylistUrl);
+      const segments = await self.fetchM3u8Playlist(self.currentMediaPlaylistUrl);
 
       if (segments.length === 0) {
         throw new Error('No segments found in M3U8 playlist');
@@ -63,7 +56,8 @@ class M3U8StreamingProxy extends StreamingProxy {
       const segmentsArray = [...segments];
 
       // Start streaming segments
-      self.hlsCleanupFunction = self.streamHlsSegments(segmentsArray, res);
+      self.isHlsStreaming = true;
+      self.streamHlsSegments(segmentsArray, res);
     } catch (error) {
       self.handleStreamError(error, 'HLS stream handling', res);
     }
@@ -198,16 +192,16 @@ class M3U8StreamingProxy extends StreamingProxy {
    * @returns {string|null} - Metadata URL or null if not found
    */
   extractMetadataUrlFromExtinf(extinfLine) {
-    // Parse the title property which contains the metadata URL
-    const titleMatch = extinfLine.match(/title="([^"]+)"/);
-    if (titleMatch && titleMatch[1]) {
-      return titleMatch[1];
-    }
-
-    // Fallback to url property if title is not found
+    // Parse the url property which contains the metadata URL
     const urlMatch = extinfLine.match(/url="([^"]+)"/);
     if (urlMatch && urlMatch[1]) {
       return urlMatch[1];
+    }
+
+    // Fallback to title property if title is not found
+    const titleMatch = extinfLine.match(/title="([^"]+)"/);
+    if (titleMatch && titleMatch[1]) {
+      return titleMatch[1];
     }
 
     return null;
@@ -217,162 +211,95 @@ class M3U8StreamingProxy extends StreamingProxy {
    * Stream HLS segments
    * @param {Array} segments - Array of segment objects
    * @param {Object} res - HTTP response object
-   * @returns {Function} - Cleanup function
    */
   streamHlsSegments(segments, res) {
     const self = this;
-    let currentIndex = 0;
-    let isStreaming = true;
-    let currentPlaylistUrl = null;
-    let lastMetadataUrl = null; // Track the last metadata URL to avoid duplicate fetches
-
-    const streamNextSegment = async () => {
-      if (!isStreaming) {
-        self.logger.info('HLS streaming stopped');
-        res.end();
-        return;
-      }
-
-      // If we've reached the end of segments, refresh the playlist
-      if (currentIndex >= segments.length) {
-        self.logger.info('Reached end of segments, refreshing playlist...');
-        // Store the current playlist URL for refresh operations
-        currentPlaylistUrl = self.currentMediaPlaylistUrl;
-        self.refreshHlsPlaylist(currentPlaylistUrl, segments, res, newSegmentsAdded => {
-          if (newSegmentsAdded > 0) {
-            self.logger.info(`Added ${newSegmentsAdded} new segments to playlist`);
-          }
-          // Always continue streaming after refresh
-          streamNextSegment();
-        });
-        return;
-      }
-
-      const segment = segments[currentIndex];
-      self.logger.info(`Streaming HLS segment ${currentIndex + 1}/${segments.length}: ${segment.segmentUrl}`);
-
-      // Fetch metadata for this segment only if it's different from the last one
-      if (segment.metadataUrl && segment.metadataUrl !== lastMetadataUrl) {
-        if (segment.metadataUrl.endsWith('/eventdata/-1')) {
-          self.logger.info('Received -1 event data URL, fetching show information');
-          // Use the same fallback strategy as DirectStreamingProxy
-          self
-            .fetchShowData(self.currentStationCode)
-            .then(metadata => {
-              if (self.onMetadataUpdate) {
-                self.onMetadataUpdate(metadata);
-              }
-            })
-            .catch(error => {
-              self.logger.error(`Failed to fetch show data: ${error.message}`);
-              // Fall back to default metadata
-              const defaultMetadata = self.createMetadataObject('Non stop music', 'Planet Rock', '', '');
-              if (self.onMetadataUpdate) {
-                self.onMetadataUpdate(defaultMetadata);
-              }
-            });
-          lastMetadataUrl = segment.metadataUrl;
-        } else if (segment.metadataUrl !== 'https://listenapi.planetradio.co.uk/api9.2/eventdata/-1') {
-          self.logger.info(`Fetching new metadata from: ${segment.metadataUrl}`);
-          lastMetadataUrl = segment.metadataUrl;
-
-          // Fetch and update metadata immediately (like the old working approach)
-          self.fetchAndUpdateMetadata(segment.metadataUrl, 'segment').catch(error => {
-            self.logger.error(`Failed to fetch segment metadata: ${error.message}`);
-          });
-        }
-      } else if (segment.metadataUrl === lastMetadataUrl) {
-        self.logger.info('Skipping metadata fetch - same URL as previous segment');
-      }
-
-      // Use the callback to add authentication parameters
-      const authenticatedSegmentUrl = self.addAuthParamsCallback(new URL(segment.segmentUrl));
-
-      try {
-        const response = await axios({
-          method: 'get',
-          url: authenticatedSegmentUrl,
-          responseType: 'stream',
-          ...self.getCommonRequestOptions(),
-        });
-
-        // Pipe the segment data
-        response.data.pipe(res, { end: false });
-
-        // Handle segment end - this is more reliable than setTimeout
-        response.data.on('end', () => {
-          self.logger.info(`HLS segment ${currentIndex + 1} completed`);
-          // Move to next segment with minimal delay to reduce gaps
-          setTimeout(() => {
-            currentIndex++;
-            streamNextSegment();
-          }, SEGMENT_TRANSITION_DELAY);
-        });
-
-        // Handle segment error
-        response.data.on('error', error => {
-          self.logger.error(`HLS segment error: ${error.message}`);
-          // Continue with next segment
-          currentIndex++;
-          streamNextSegment();
-        });
-      } catch (error) {
-        self.logger.error(`Failed to stream HLS segment: ${error.message}`);
-        // Continue with next segment
-        currentIndex++;
-        setTimeout(streamNextSegment, RETRY_DELAY);
-      }
-    };
+    
+    // Store state for the streaming session
+    self.currentHlsSegments = segments;
+    self.currentHlsResponse = res;
+    self.lastHlsMetadataUrl = null;
 
     // Start streaming
-    streamNextSegment();
-
-    // Return cleanup function
-    return () => {
-      isStreaming = false;
-    };
+    self._streamNextSegment();
   }
 
   /**
-   * Create metadata object (like the DirectStreamingProxy)
-   * @param {string} title - Track title
-   * @param {string} artist - Track artist
-   * @param {string} album - Track album
-   * @param {string} albumart - Album art URL
-   * @param {string} uri - Stream URI (optional)
-   * @returns {Object} - Metadata object
+   * Private method to stream the next HLS segment
+   * @private
    */
-  createMetadataObject(title, artist, album, albumart, uri) {
-    return {
-      title: title || 'Unknown Track',
-      artist: artist || 'Planet Rock',
-      album: album || '',
-      albumart: albumart || '/albumart?sourceicon=music_service/planetrock_multi_radio/assets/planetrock_multi_radio.webp',
-      uri: uri || `http://localhost:${this.proxyPort || '3000'}/stream`,
-    };
-  }
-
-  /**
-   * Fetch show data for station (like the DirectStreamingProxy)
-   * @param {string} stationCode - The station code
-   * @returns {Promise<Object>} - Promise resolving to show metadata
-   */
-  async fetchShowData(stationCode) {
+  async _streamNextSegment() {
     const self = this;
-    const url = `https://listenapi.planetradio.co.uk/api9.2/stations_nowplaying/GB?StationCode%5B%5D=${stationCode}&premium=1`;
+    
+    if (!self.isHlsStreaming) {
+      self.logger.info('HLS streaming stopped');
+      if (self.currentHlsResponse) {
+        self.currentHlsResponse.end();
+      }
+      return;
+    }
+
+    // If we've reached the end of segments, refresh the playlist
+    if (self.currentHlsSegments.length === 0) {
+      self.logger.info('No more segments, refreshing playlist...');
+      const currentPlaylistUrl = self.currentMediaPlaylistUrl;
+      self.refreshHlsPlaylist(currentPlaylistUrl, self.currentHlsSegments, self.currentHlsResponse, newSegmentsAdded => {
+        if (newSegmentsAdded > 0) {
+          self.logger.info(`Added ${newSegmentsAdded} new segments to playlist`);
+        }
+        // Always continue streaming after refresh
+        self._streamNextSegment();
+      });
+      return;
+    }
+
+    // Take the next segment from the front of the queue and remove it
+    const segment = self.currentHlsSegments.shift();
+    self.logger.info(`Streaming HLS segment (${self.currentHlsSegments.length} remaining): ${segment.segmentUrl}`);
+
+    // Fetch metadata for this segment only if it's different from the last one
+    if (segment.metadataUrl && segment.metadataUrl !== self.lastHlsMetadataUrl) {
+      self.logger.info(`Fetching new metadata from: ${segment.metadataUrl}`);
+      self.lastHlsMetadataUrl = segment.metadataUrl;
+
+      // Use the superclass method to fetch and update metadata
+      self.fetchAndUpdateMetadata(segment.metadataUrl, 'segment').catch(error => {
+        self.logger.error(`Failed to fetch segment metadata: ${error.message}`);
+      });
+    } else if (segment.metadataUrl === self.lastHlsMetadataUrl) {
+      self.logger.info('Skipping metadata fetch - same URL as previous segment');
+    }
 
     try {
-      const response = await axios.get(url);
-      self.logger.info(`Show data response: ${JSON.stringify(response.data, null, 2)}`);
+      const response = await axios({
+        method: 'get',
+        url: segment.segmentUrl,
+        responseType: 'stream',
+        ...self.getCommonRequestOptions(),
+      });
 
-      if (response.data && response.data[0] && response.data[0].stationOnAir) {
-        const showData = response.data[0].stationOnAir;
-        return self.createMetadataObject(showData.episodeTitle, 'Planet Rock', showData.episodeDescription, showData.episodeImageUrl);
-      }
-      throw new Error('No show data available');
+      // Pipe the segment data
+      response.data.pipe(self.currentHlsResponse, { end: false });
+
+      // Handle segment end - this is more reliable than setTimeout
+      response.data.on('end', () => {
+        self.logger.info('HLS segment completed');
+        // Move to next segment with minimal delay to reduce gaps
+        setTimeout(() => {
+          self._streamNextSegment();
+        }, SEGMENT_TRANSITION_DELAY);
+      });
+
+      // Handle segment error
+      response.data.on('error', error => {
+        self.logger.error(`HLS segment error: ${error.message}`);
+        // Continue with next segment
+        self._streamNextSegment();
+      });
     } catch (error) {
-      self.logger.error(`Failed to fetch show data: ${error.message}`);
-      return self.createMetadataObject('Non stop music', 'Planet Rock', '', '');
+      self.logger.error(`Failed to stream HLS segment: ${error.message}`);
+      // Continue with next segment
+      setTimeout(() => self._streamNextSegment(), RETRY_DELAY);
     }
   }
 
@@ -405,9 +332,6 @@ class M3U8StreamingProxy extends StreamingProxy {
 
       self.logger.info(`Found ${segmentsToAdd.length} new segments to add`);
 
-      // No need to fetch metadata here - it will be fetched when segments start playing
-      // This keeps the refresh logic simple and focused
-
       // Add the new segments to the current playlist
       segmentsToAdd.forEach(segment => currentSegments.push(segment));
 
@@ -427,12 +351,12 @@ class M3U8StreamingProxy extends StreamingProxy {
    */
   stop() {
     const self = this;
+    super.stop();
+    
+    self.logger.info('Stopping M3U8 streaming proxy and cleaning up HLS resources');
 
-    // Clear HLS-specific cleanup function
-    if (self.hlsCleanupFunction) {
-      self.hlsCleanupFunction();
-      self.hlsCleanupFunction = null;
-    }
+    // Stop HLS streaming
+    self.isHlsStreaming = false;
 
     // Clear HLS refresh timer
     if (self.hlsRefreshTimer) {
@@ -440,15 +364,13 @@ class M3U8StreamingProxy extends StreamingProxy {
       self.hlsRefreshTimer = null;
     }
 
-    // Reset HLS state
-    self.isHlsStreaming = false;
+    // Reset HLS-specific state
     self.currentHlsSegments = null;
-    self.currentHlsSegmentIndex = null;
     self.lastHlsMetadataUrl = null;
     self.currentMediaPlaylistUrl = null;
+    self.currentHlsResponse = null;
 
-    // Call parent stop method
-    super.stop();
+    self.logger.info('M3U8 streaming proxy cleanup completed');
   }
 }
 
