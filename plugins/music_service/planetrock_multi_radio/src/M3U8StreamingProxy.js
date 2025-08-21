@@ -22,6 +22,7 @@ class M3U8StreamingProxy extends StreamingProxy {
     this.lastHlsMetadataUrl = null;
     this.currentMediaPlaylistUrl = null;
     this.currentHlsResponse = null;
+    this.lastPlayedProgressiveCounter = 0; // Track the highest progressive counter we've played
   }
 
   async handleStream(playlistUrl, res) {
@@ -55,8 +56,6 @@ class M3U8StreamingProxy extends StreamingProxy {
       // Create a mutable segments array for refresh functionality
       const segmentsArray = [...segments];
 
-      // Start streaming segments
-      self.isHlsStreaming = true;
       self.streamHlsSegments(segmentsArray, res);
     } catch (error) {
       self.handleStreamError(error, 'HLS stream handling', res);
@@ -208,12 +207,29 @@ class M3U8StreamingProxy extends StreamingProxy {
   }
 
   /**
+   * Extract progressive counter from segment URL
+   * @param {string} segmentUrl - The segment URL
+   * @returns {number} - The progressive counter value, or 0 if not found
+   */
+  _extractProgressiveCounter(segmentUrl) {
+    // Extract progressive counter from URL format:
+    // https://chunks-aphls.hellorayo.co.uk/pr_webcast1_master.aac/[random id]-[progressive counter]-[other id].aac
+    const match = segmentUrl.match(/\/([^-]+)-(\d+)-([^-]+)\.aac$/);
+    if (match) {
+      return parseInt(match[2], 10);
+    }
+    return 0;
+  }
+
+  /**
    * Stream HLS segments
    * @param {Array} segments - Array of segment objects
    * @param {Object} res - HTTP response object
    */
   streamHlsSegments(segments, res) {
     const self = this;
+
+    self.isHlsStreaming = true;
     
     // Store state for the streaming session
     self.currentHlsSegments = segments;
@@ -255,7 +271,11 @@ class M3U8StreamingProxy extends StreamingProxy {
 
     // Take the next segment from the front of the queue and remove it
     const segment = self.currentHlsSegments.shift();
-    self.logger.info(`Streaming HLS segment (${self.currentHlsSegments.length} remaining): ${segment.segmentUrl}`);
+    
+    // Update the last played progressive counter
+    self.lastPlayedProgressiveCounter = self._extractProgressiveCounter(segment.segmentUrl);
+    
+    self.logger.info(`Streaming HLS segment (${self.currentHlsSegments.length} remaining, progressive counter: ${self.lastPlayedProgressiveCounter}): ${segment.segmentUrl}`);
 
     // Fetch metadata for this segment only if it's different from the last one
     if (segment.metadataUrl && segment.metadataUrl !== self.lastHlsMetadataUrl) {
@@ -326,11 +346,13 @@ class M3U8StreamingProxy extends StreamingProxy {
 
       self.logger.info(`Refreshed playlist has ${newSegments.length} segments`);
 
-      // Simple approach: just filter out existing segments by URL (like the old working version)
-      const currentSegmentUrls = new Set(currentSegments.map(seg => seg.segmentUrl));
-      const segmentsToAdd = newSegments.filter(segment => !currentSegmentUrls.has(segment.segmentUrl));
+      // Filter out segments that have already been played based on progressive counter
+      const segmentsToAdd = newSegments.filter(segment => {
+        const progressiveCounter = self._extractProgressiveCounter(segment.segmentUrl);
+        return progressiveCounter > self.lastPlayedProgressiveCounter;
+      });
 
-      self.logger.info(`Found ${segmentsToAdd.length} new segments to add`);
+      self.logger.info(`Found ${segmentsToAdd.length} new segments to add (filtered out ${newSegments.length - segmentsToAdd.length} old segments)`);
 
       // Add the new segments to the current playlist
       segmentsToAdd.forEach(segment => currentSegments.push(segment));
@@ -369,6 +391,7 @@ class M3U8StreamingProxy extends StreamingProxy {
     self.lastHlsMetadataUrl = null;
     self.currentMediaPlaylistUrl = null;
     self.currentHlsResponse = null;
+    self.lastPlayedProgressiveCounter = 0;
 
     self.logger.info('M3U8 streaming proxy cleanup completed');
   }
