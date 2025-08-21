@@ -262,8 +262,8 @@ class M3U8StreamingProxy extends StreamingProxy {
       self.logger.info(`Fetching new metadata from: ${segment.metadataUrl}`);
       self.lastHlsMetadataUrl = segment.metadataUrl;
 
-      // Use the superclass method to fetch and update metadata
-      self.fetchAndUpdateMetadata(segment.metadataUrl, 'segment').catch(error => {
+      // Use the metadata fetcher to fetch and update metadata
+      self.metadataFetcher.fetchAndUpdateMetadata(segment.metadataUrl, self.stationCode, 'segment').catch(error => {
         self.logger.error(`Failed to fetch segment metadata: ${error.message}`);
       });
     } else if (segment.metadataUrl === self.lastHlsMetadataUrl) {

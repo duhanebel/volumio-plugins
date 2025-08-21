@@ -1,7 +1,7 @@
 'use strict';
 
 const libQ = require('kew');
-const axios = require('axios');
+const MetadataFetcher = require('./MetadataFetcher');
 
 // Constants
 const HTTP_NOT_FOUND = 404;
@@ -22,8 +22,8 @@ class StreamingProxy {
     this.eventSource = null;
     this.aisSessionId = null;
 
-    // Callback for metadata updates
-    this.onMetadataUpdate = null;
+    // Metadata fetcher
+    this.metadataFetcher = new MetadataFetcher(logger);
 
     // Current stream info
     this.streamURL = null;
@@ -35,7 +35,7 @@ class StreamingProxy {
    * @param {Function} callback - Function to call when metadata changes
    */
   setMetadataCallback(callback) {
-    this.onMetadataUpdate = callback;
+    this.metadataFetcher.setMetadataCallback(callback);
   }
 
   /**
@@ -107,105 +107,7 @@ class StreamingProxy {
     return `http://localhost:${this.proxyPort}/stream`;
   }
 
-  /**
-   * Fetch and process metadata from URL
-   * @param {string} metadataUrl - The metadata URL
-   * @returns {Promise<Object|null>} - Promise resolving to metadata object or null
-   */
-  async fetchMetadataFromUrl(metadataUrl) {
-    const self = this;
 
-    if (!metadataUrl) {
-      return null;
-    }
-
-    // Skip the -1 event data URL (show information)
-    if (metadataUrl.endsWith('/eventdata/-1')) {
-      self.logger.info('Skipping -1 event data URL, fetching show information');
-      return await self.fetchShowData(self.stationCode);
-    }
-
-
-    try {
-      const response = await require('axios').get(metadataUrl);
-      self.logger.info(`Fetched metadata from: ${metadataUrl}`);
-
-      if (response.data) {
-        const trackData = response.data;
-        return self.createMetadataObject(trackData.eventSongTitle, trackData.eventSongArtist, null, trackData.eventImageUrl);
-      }
-      return null;
-    } catch (error) {
-      self.logger.error(`Failed to fetch metadata from URL: ${error.message}`);
-      // Fallback to show data
-      return await self.fetchShowData(self.stationCode);
-    }
-  }
-
-  /**
-   * Common method to fetch and update metadata
-   * @param {string} metadataUrl - The metadata URL
-   * @param {string} context - Context for logging (e.g., 'segment', 'EventSource')
-   * @returns {Promise<void>}
-   */
-  async fetchAndUpdateMetadata(metadataUrl, context = 'unknown') {
-    const self = this;
-
-    if (!metadataUrl) {
-      return;
-    }
-
-    try {
-      const metadata = await self.fetchMetadataFromUrl(metadataUrl);
-      if (metadata && self.onMetadataUpdate) {
-        self.logger.info(`Updated metadata from ${context}: ${JSON.stringify(metadata, null, 2)}`);
-        self.onMetadataUpdate(metadata);
-      }
-    } catch (error) {
-      self.logger.error(`Failed to fetch metadata from ${context}: ${error.message}`);
-    }
-  }
-
-  /**
-   * Create metadata object
-   * @param {string} title - Track title
-   * @param {string} artist - Track artist
-   * @param {string} album - Track album
-   * @param {string} albumart - Album art URL
-   * @returns {Object} - Metadata object
-   */
-  createMetadataObject(title, artist, album, albumart) {
-    return {
-      title: title == '' ? null : title,
-      artist: artist == '' ? null : artist,
-      album: album == '' ? null : album,
-      albumart: albumart == '' ? null : albumart,
-    };
-  }
-
-  /**
-   * Fetch show data for station
-   * @param {string} stationCode - The station code
-   * @returns {Promise<Object>} - Promise resolving to show metadata
-   */
-  async fetchShowData(stationCode) {
-    const self = this;
-    const url = `https://listenapi.planetradio.co.uk/api9.2/stations/GB?StationCode%5B%5D=${stationCode}&premium=1`;
-
-    try {
-      const response = await axios.get(url);
-      self.logger.info('Show data response:', JSON.stringify(response.data, null, 2));
-
-      if (response.data && response.data[0] && response.data[0].stationOnAir) {
-        const showData = response.data[0].stationOnAir;
-        return self.createMetadataObject(showData.episodeTitle, showData.stationName, null, showData.episodeImageUrl);
-      }
-      throw new Error('No show data available');
-    } catch (error) {
-      self.logger.error('Failed to fetch show data:', error.message);
-      return self.createMetadataObject('Non stop music', 'Planet Rock', null, null);
-    }
-  }
 
   /**
    * Common method to create HTTP request options with standard headers

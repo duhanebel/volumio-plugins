@@ -75,7 +75,7 @@ class DirectStreamingProxy extends StreamingProxy {
           self.logger.info(`Parsed metadata object: ${JSON.stringify(metadataObj, null, 2)}`);
 
           if (metadataObj.url) {
-            self.fetchAndUpdateMetadata(metadataObj.url, 'EventSource');
+            self.metadataFetcher.fetchAndUpdateMetadata(metadataObj.url, self.stationCode, 'EventSource');
           }
         }
       } catch (error) {
