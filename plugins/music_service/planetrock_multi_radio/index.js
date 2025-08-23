@@ -36,8 +36,6 @@ const ControllerPlanetRadio = function (context) {
   // Metadata delay handling
   self.metadataUpdateTimer = null;
   self.isFirstMetadataUpdate = true;
-
-  self.logger.info('ControllerPlanetRadio::constructor');
 };
 
 ControllerPlanetRadio.prototype.onVolumioStart = function () {
@@ -70,7 +68,6 @@ ControllerPlanetRadio.prototype.onStop = function () {
   // Use centralized cleanup method
   self._cleanupResources();
 
-  self.logger.info('Plugin cleanup completed');
   return libQ.resolve();
 };
 
@@ -80,7 +77,6 @@ ControllerPlanetRadio.prototype.onStop = function () {
  */
 ControllerPlanetRadio.prototype._cleanupResources = function () {
   const self = this;
-  self.logger.info('Starting centralized resource cleanup');
 
   // Clear metadata timer
   if (self.metadataUpdateTimer) {
@@ -112,8 +108,6 @@ ControllerPlanetRadio.prototype._cleanupResources = function () {
   }
 
   self.isFirstTimeMetadata = true;
-
-  self.logger.info('Centralized resource cleanup completed');
 };
 
 ControllerPlanetRadio.prototype.onRestart = function () {
@@ -157,7 +151,6 @@ ControllerPlanetRadio.prototype.getUIConfig = function () {
   self.commandRouter
     .i18nJson(`${__dirname}/i18n/strings_${lang_code}.json`, `${__dirname}/i18n/strings_en.json`, `${__dirname}/UIConfig.json`)
     .then(function (uiconf) {
-      self.logger.info('i18nJson loaded successfully, updating config values...');
 
       // Ensure config values exist, use defaults if not
       const username = self.config.get('username') || '';
@@ -171,7 +164,6 @@ ControllerPlanetRadio.prototype.getUIConfig = function () {
       uiconf.sections[0].content[1].value = password;
       uiconf.sections[0].content[2].value = metadataDelay;
 
-      self.logger.info('UI config loaded successfully, resolving promise');
       defer.resolve(uiconf);
     })
     .fail(function (error) {
@@ -225,7 +217,6 @@ ControllerPlanetRadio.prototype.addToBrowseSources = function () {
     plugin_name: 'planet_radio',
     albumart: DEFAULT_ALBUM_ART,
   });
-  self.logger.info('Planet Radio added to browse sources');
 };
 
 ControllerPlanetRadio.prototype.handleBrowseUri = function (curUri) {
@@ -336,8 +327,6 @@ ControllerPlanetRadio.prototype.authenticate = function () {
     return libQ.reject(new Error(self.getRadioI18nString('ERROR_NO_CREDENTIALS')));
   }
 
-  self.logger.info('Starting authentication with AuthManager...');
-
   // Use AuthManager to handle authentication (now returns libQ promise directly)
   return self.authManager
     .authenticate(username, password)
@@ -403,8 +392,6 @@ ControllerPlanetRadio.prototype.getRootContent = function () {
 ControllerPlanetRadio.prototype.explodeUri = function (uri) {
   const self = this;
 
-  self.logger.info(`explodeUri called with URI: ${uri}`);
-
   if (uri.startsWith('planetradio/')) {
     const stationCode = uri.split('/')[1];
 
@@ -455,10 +442,6 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
   const defer = libQ.defer();
 
   self.logger.info('ControllerPlanetRadio::clearAddPlayTrack called');
-  self.logger.info(`Track object: ${JSON.stringify(track)}`);
-
-  // Stop whatever is currently playing and clean up before starting new playback
-  self.logger.info('Stopping current playback and cleaning up before starting new playback...');
 
   // Clear any existing metadata timer
   if (self.metadataUpdateTimer) {
@@ -482,7 +465,6 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
       self.logger.info('Stopping existing streaming proxy...');
       self.streamingProxy.stop();
       self.streamingProxy = null;
-      self.logger.info('Existing streaming proxy stopped successfully');
     } catch (error) {
       self.logger.warn('Error stopping existing streaming proxy:', error.message);
       // Force cleanup even if stop fails
@@ -574,13 +556,7 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
       }
 
       self.commandRouter.pushToastMessage('error', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('ERROR_STREAMING'));
-
-      // Only reject if not already resolved
-      if (defer.promise._state === 'pending') {
-        defer.reject(new Error(self.getRadioI18nString('ERROR_STREAMING')));
-      } else {
-        self.logger.warn('Promise already resolved, skipping reject');
-      }
+      defer.reject(new Error(self.getRadioI18nString('ERROR_STREAMING')));
     });
 
   return defer.promise;
@@ -602,10 +578,6 @@ ControllerPlanetRadio.prototype.pushSongState = function (metadata) {
 
     self
       .pushSongStateImmediate(metadata)
-      .then(function () {
-        // Success - metadata updated immediately
-        self.logger.info('First metadata update completed immediately');
-      })
       .fail(function (error) {
         self.logger.warn('Non-critical error in first metadata update:', error.message);
       });
@@ -618,12 +590,8 @@ ControllerPlanetRadio.prototype.pushSongState = function (metadata) {
       self.logger.info('Metadata update timer triggered. Fetching MPD status...');
       self
         .pushSongStateImmediate(metadata)
-        .then(function () {
-          // Success - metadata updated after delay
-        })
         .fail(function (error) {
           self.logger.warn('Non-critical error in pushSongState:', error.message);
-          // Continue with basic metadata even if MPD status fails
         });
     }, metadataDelay * 1000);
   }
@@ -658,7 +626,6 @@ ControllerPlanetRadio.prototype.pushSongStateImmediate = function (metadata) {
   self.mpdPlugin
     .sendMpdCommand('status', [])
     .then(function (status) {
-      self.logger.info(`MPD status command returned. Response received: ${JSON.stringify(status, null, 2)}`);
 
       if (status) {
         self.logger.info('Parsing MPD status for audio info.');
@@ -684,8 +651,6 @@ ControllerPlanetRadio.prototype.pushSongStateImmediate = function (metadata) {
     })
     .fail(function (error) {
       self.logger.warn('Failed to get MPD status, continuing with basic metadata:', error.message);
-      // Continue with basic metadata even if MPD status fails
-
       // Update Volumio state with metadata (with or without MPD audio info)
       self.updateVolumioState(planetRockState);
       defer.resolve();
@@ -705,9 +670,6 @@ ControllerPlanetRadio.prototype.stop = function () {
     })
     .then(function () {
       self.logger.info('MPD playback stopped successfully');
-    })
-    .then(function () {
-      // Always perform cleanup regardless of MPD command success/failure
       self.updateVolumioState({ status: 'stop' });
       self._cleanupResources();
     });
@@ -746,7 +708,6 @@ ControllerPlanetRadio.prototype.addAuthParamsToStreamURL = function (streamUrl) 
   const userId = self.authManager.getUserId();
 
   self.logger.info(`Adding auth parameters to stream URL for user ID: ${userId}`);
-  self.logger.info(`Stream URL type: ${typeof streamUrl}, value: ${streamUrl}`);
 
   if (!userId) {
     self.logger.error('No user ID available for authentication');
@@ -761,7 +722,7 @@ ControllerPlanetRadio.prototype.addAuthParamsToStreamURL = function (streamUrl) 
   try {
     // Call the synchronous method directly
     const result = self.stationManager.addAuthParameters(streamUrl, userId);
-    self.logger.info('Auth parameters added successfully');
+    this.logger.info(`Authenticated stream URL: ${result.toString()}`);
     return result;
   } catch (error) {
     self.logger.error(`Error in addAuthParamsToStreamURL: ${error.message}`);

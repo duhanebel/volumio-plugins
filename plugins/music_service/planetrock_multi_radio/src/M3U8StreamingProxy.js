@@ -28,8 +28,6 @@ class M3U8StreamingProxy extends StreamingProxy {
   async handleStream(playlistUrl, res) {
     const self = this;
 
-    self.logger.info(`Starting HLS stream handling for: ${playlistUrl.toString()}`);
-
     // Set appropriate headers for HLS stream with buffering
     res.writeHead(HTTP_OK, {
       'Content-Type': 'audio/aac',
@@ -51,7 +49,7 @@ class M3U8StreamingProxy extends StreamingProxy {
         throw new Error('No segments found in M3U8 playlist');
       }
 
-      self.logger.info(`Starting HLS segment streaming with ${segments.length} segments`);
+      self.logger.info(`Starting HLS segment streaming with ${segments.length} segments for: ${playlistUrl.toString()}`);
 
       // Create a mutable segments array for refresh functionality
       const segmentsArray = [...segments];
@@ -82,7 +80,6 @@ class M3U8StreamingProxy extends StreamingProxy {
 
       // Check if this is a master playlist (contains stream variants)
       if (response.data.includes('#EXT-X-STREAM-INF:')) {
-        self.logger.info('Detected master playlist, extracting media playlist URL');
         const mediaPlaylistUrl = self.parseMasterPlaylist(response.data);
 
         if (mediaPlaylistUrl) {
@@ -114,8 +111,6 @@ class M3U8StreamingProxy extends StreamingProxy {
           'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.3.1 Safari/605.1.15',
         },
       });
-
-      self.logger.info(`Fetched media playlist from: ${playlistUrl.toString()}`);
 
       const segments = self.parseM3u8Playlist(response.data);
 
@@ -259,13 +254,19 @@ class M3U8StreamingProxy extends StreamingProxy {
     if (self.currentHlsSegments.length === 0) {
       self.logger.info('No more segments, refreshing playlist...');
       const currentPlaylistUrl = self.currentMediaPlaylistUrl;
-      self.refreshHlsPlaylist(currentPlaylistUrl, self.currentHlsSegments, self.currentHlsResponse, newSegmentsAdded => {
-        if (newSegmentsAdded > 0) {
-          self.logger.info(`Added ${newSegmentsAdded} new segments to playlist`);
+        
+      try {
+        const newSegments = await self.fetchNewHlsSegments(currentPlaylistUrl);
+        if (newSegments.length > 0) {
+          self.logger.info(`Adding ${newSegments.length} new segments to playlist`);
+          self.currentHlsSegments.push(...newSegments);
         }
-        // Always continue streaming after refresh
-        self._streamNextSegment();
-      });
+      } catch (error) {
+        self.logger.error(`Failed to refresh playlist: ${error.message}`);
+      }
+        
+      // Continue streaming (either with new segments or empty list)
+      self._streamNextSegment();
       return;
     }
 
@@ -327,10 +328,8 @@ class M3U8StreamingProxy extends StreamingProxy {
    * Refresh HLS playlist
    * @param {URL} playlistUrl - The playlist URL object
    * @param {Array} currentSegments - Current segments array
-   * @param {Object} res - HTTP response object
-   * @param {Function} continueCallback - Callback to continue streaming
    */
-  async refreshHlsPlaylist(playlistUrl, currentSegments, res, continueCallback) {
+  async fetchNewHlsSegments(playlistUrl, currentSegments) {
     const self = this;
 
     // Use the callback to add authentication parameters (callback handles all auth logic)
@@ -344,8 +343,6 @@ class M3U8StreamingProxy extends StreamingProxy {
         throw new Error('No segments found in refreshed M3U8 playlist');
       }
 
-      self.logger.info(`Refreshed playlist has ${newSegments.length} segments`);
-
       // Filter out segments that have already been played based on progressive counter
       const segmentsToAdd = newSegments.filter(segment => {
         const progressiveCounter = self._extractProgressiveCounter(segment.segmentUrl);
@@ -356,16 +353,13 @@ class M3U8StreamingProxy extends StreamingProxy {
 
       // Add the new segments to the current playlist
       segmentsToAdd.forEach(segment => currentSegments.push(segment));
+      return segmentsToAdd;
 
-      // Call the callback with the number of new segments added
-      continueCallback(segmentsToAdd.length);
     } catch (error) {
       self.logger.error(`Failed to refresh HLS playlist: ${error.message}`);
-      // Retry after a short delay
-      setTimeout(() => {
-        self.refreshHlsPlaylist(playlistUrl, currentSegments, res, continueCallback);
-      }, RETRY_DELAY);
     }
+
+    return [];
   }
 
   /**

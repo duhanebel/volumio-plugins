@@ -277,7 +277,6 @@ class StationManager {
     try {
       // Create a copy of the URL to avoid modifying the original
       const url = new URL(streamUrl.toString());
-      this.logger.info(`[addAuthParameters] Created URL object: ${url.toString()}`);
       const existingParams = new URLSearchParams(url.search);
 
       // Prepare authentication parameters
@@ -301,9 +300,6 @@ class StationManager {
 
       // Reconstruct the URL with all parameters
       url.search = existingParams.toString();
-
-      this.logger.info('Added authentication parameters to stream URL');
-      this.logger.info(`Authenticated stream URL: ${url.toString()}`);
 
       return url;
     } catch (error) {
