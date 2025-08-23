@@ -211,7 +211,8 @@ class M3U8StreamingProxy extends StreamingProxy {
     // https://chunks-aphls.hellorayo.co.uk/pr_webcast1_master.aac/[random id]-[progressive counter]-[other id].aac
     const match = segmentUrl.match(/\/([^-]+)-(\d+)-([^-]+)\.aac$/);
     if (match) {
-      return parseInt(match[2], 10);
+      const counter = parseInt(match[2], 10);
+      return isNaN(counter) ? 0 : counter;
     }
     return 0;
   }
@@ -227,7 +228,7 @@ class M3U8StreamingProxy extends StreamingProxy {
     self.isHlsStreaming = true;
     
     // Store state for the streaming session
-    self.currentHlsSegments = segments;
+    self.currentHlsSegments = [...segments]; // Create a copy to avoid external modifications
     self.currentHlsResponse = res;
     self.lastHlsMetadataUrl = null;
 
@@ -250,13 +251,19 @@ class M3U8StreamingProxy extends StreamingProxy {
       return;
     }
 
+    // Check if we have a valid response object
+    if (!self.currentHlsResponse) {
+      self.logger.error('No valid response object available for streaming');
+      return;
+    }
+
     // If we've reached the end of segments, refresh the playlist
     if (self.currentHlsSegments.length === 0) {
       self.logger.info('No more segments, refreshing playlist...');
       const currentPlaylistUrl = self.currentMediaPlaylistUrl;
         
       try {
-        const newSegments = await self.fetchNewHlsSegments(currentPlaylistUrl);
+        const newSegments = await self.fetchNewHlsSegments(currentPlaylistUrl, self.currentHlsSegments);
         if (newSegments.length > 0) {
           self.logger.info(`Adding ${newSegments.length} new segments to playlist`);
           self.currentHlsSegments.push(...newSegments);
@@ -265,9 +272,13 @@ class M3U8StreamingProxy extends StreamingProxy {
         self.logger.error(`Failed to refresh playlist: ${error.message}`);
       }
         
-      // Continue streaming (either with new segments or empty list)
-      self._streamNextSegment();
-      return;
+      // If we still have no segments after refresh, we might want to stop or retry
+      if (self.currentHlsSegments.length === 0) {
+        self.logger.warn('No segments available even after refresh, stopping streaming');
+        return;
+      }
+      
+      // Continue with normal flow - don't call recursively, just let it continue
     }
 
     // Take the next segment from the front of the queue and remove it
@@ -327,9 +338,8 @@ class M3U8StreamingProxy extends StreamingProxy {
   /**
    * Refresh HLS playlist
    * @param {URL} playlistUrl - The playlist URL object
-   * @param {Array} currentSegments - Current segments array
    */
-  async fetchNewHlsSegments(playlistUrl, currentSegments) {
+  async fetchNewHlsSegments(playlistUrl) {
     const self = this;
 
     // Use the callback to add authentication parameters (callback handles all auth logic)
@@ -351,8 +361,6 @@ class M3U8StreamingProxy extends StreamingProxy {
 
       self.logger.info(`Found ${segmentsToAdd.length} new segments to add (filtered out ${newSegments.length - segmentsToAdd.length} old segments)`);
 
-      // Add the new segments to the current playlist
-      segmentsToAdd.forEach(segment => currentSegments.push(segment));
       return segmentsToAdd;
 
     } catch (error) {
