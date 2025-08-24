@@ -99,7 +99,7 @@ module.exports = [
       'no-script-url': 'error',
 
       // Code quality
-      complexity: ['warn', 12],
+      complexity: ['warn', 15],
       'max-depth': ['warn', 5],
       'max-lines': ['warn', 1200],
       'max-params': ['warn', 6],

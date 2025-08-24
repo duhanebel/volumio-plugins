@@ -6,7 +6,6 @@ const axios = require('axios');
 // Constants
 const RETRY_DELAY = 1000; // 1 second retry delay (same as old working version)
 const HTTP_OK = 200;
-const SEGMENT_TRANSITION_DELAY = 50; // Delay between segments for smooth transition (ms)
 
 /**
  * Streaming proxy for HLS/M3U8 streams
@@ -287,7 +286,7 @@ class M3U8StreamingProxy extends StreamingProxy {
     // Update the last played progressive counter
     self.lastPlayedProgressiveCounter = self._extractProgressiveCounter(segment.segmentUrl);
     
-    self.logger.info(`Streaming HLS segment (${self.currentHlsSegments.length} remaining, progressive counter: ${self.lastPlayedProgressiveCounter}): ${segment.segmentUrl}`);
+    self.logger.info(`Streaming HLS segment (${self.currentHlsSegments.length} remaining, duration: ${segment.duration}s, progressive counter: ${self.lastPlayedProgressiveCounter}): ${segment.segmentUrl}`);
 
     // Fetch metadata for this segment only if it's different from the last one
     if (segment.metadataUrl && segment.metadataUrl !== self.lastHlsMetadataUrl) {
@@ -313,20 +312,20 @@ class M3U8StreamingProxy extends StreamingProxy {
       // Pipe the segment data
       response.data.pipe(self.currentHlsResponse, { end: false });
 
-      // Handle segment end - this is more reliable than setTimeout
-      response.data.on('end', () => {
-        self.logger.info('HLS segment completed');
-        // Move to next segment with minimal delay to reduce gaps
-        setTimeout(() => {
-          self._streamNextSegment();
-        }, SEGMENT_TRANSITION_DELAY);
-      });
-
-      // Handle segment error
-      response.data.on('error', error => {
-        self.logger.error(`HLS segment error: ${error.message}`);
-        // Continue with next segment
+      // Schedule the next segment based on the segment's actual duration
+      const segmentDurationMs = (segment.duration || 10) * 1000; // Default to 10 seconds if duration is missing
+      self.logger.info(`Segment will play for ${segment.duration || 10} seconds, scheduling next segment`);
+      
+      setTimeout(() => {
+        self.logger.info('Segment duration completed, moving to next segment');
         self._streamNextSegment();
+      }, segmentDurationMs);
+
+      // Handle segment download error (but don't move to next segment immediately)
+      response.data.on('error', error => {
+        self.logger.error(`HLS segment download error: ${error.message}`);
+        // Don't immediately move to next segment - let the timer handle it
+        // unless it's a critical error that prevents streaming
       });
     } catch (error) {
       self.logger.error(`Failed to stream HLS segment: ${error.message}`);
