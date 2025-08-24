@@ -6,8 +6,9 @@ const axios = require('axios');
  * Handles metadata fetching and processing for streaming services
  */
 class MetadataFetcher {
-  constructor(logger) {
+  constructor(logger, stationCode) {
     this.logger = logger;
+    this.stationCode = stationCode;
     this.onMetadataUpdate = null;
   }
 
@@ -22,10 +23,9 @@ class MetadataFetcher {
   /**
    * Fetch and process metadata from URL
    * @param {string} metadataUrl - The metadata URL
-   * @param {string} stationCode - The station code for fallback data
    * @returns {Promise<Object|null>} - Promise resolving to metadata object or null
    */
-  async fetchMetadataFromUrl(metadataUrl, stationCode) {
+  async fetchMetadataFromUrl(metadataUrl) {
     if (!metadataUrl) {
       return null;
     }
@@ -33,7 +33,7 @@ class MetadataFetcher {
     // Skip the -1 event data URL (show information)
     if (metadataUrl.endsWith('/eventdata/-1')) {
       this.logger.info('Skipping -1 event data URL, fetching show information');
-      return await this.fetchShowData(stationCode);
+      return await this.fetchShowData();
     }
 
     try {
@@ -48,24 +48,23 @@ class MetadataFetcher {
     } catch (error) {
       this.logger.error(`Failed to fetch metadata from URL: ${error.message}`);
       // Fallback to show data
-      return await this.fetchShowData(stationCode);
+      return await this.fetchShowData();
     }
   }
 
   /**
    * Common method to fetch and update metadata
    * @param {string} metadataUrl - The metadata URL
-   * @param {string} stationCode - The station code for fallback data
    * @param {string} context - Context for logging (e.g., 'segment', 'EventSource')
    * @returns {Promise<void>}
    */
-  async fetchAndUpdateMetadata(metadataUrl, stationCode, context = 'unknown') {
+  async fetchAndUpdateMetadata(metadataUrl, context = 'unknown') {
     if (!metadataUrl) {
       return;
     }
 
     try {
-      const metadata = await this.fetchMetadataFromUrl(metadataUrl, stationCode);
+      const metadata = await this.fetchMetadataFromUrl(metadataUrl);
       if (metadata && this.onMetadataUpdate) {
         this.logger.info(`Updated metadata from ${context}: ${JSON.stringify(metadata, null, 2)}`);
         this.onMetadataUpdate(metadata);
@@ -94,11 +93,10 @@ class MetadataFetcher {
 
   /**
    * Fetch show data for station
-   * @param {string} stationCode - The station code
    * @returns {Promise<Object>} - Promise resolving to show metadata
    */
-  async fetchShowData(stationCode) {
-    const url = `https://listenapi.planetradio.co.uk/api9.2/stations/GB?StationCode%5B%5D=${stationCode}&premium=1`;
+  async fetchShowData() {
+    const url = `https://listenapi.planetradio.co.uk/api9.2/stations/GB?StationCode%5B%5D=${this.stationCode}&premium=1`;
 
     try {
       const response = await axios.get(url);

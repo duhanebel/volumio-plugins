@@ -4,7 +4,9 @@ const libQ = require('kew');
 const fs = require('fs-extra');
 const AuthManager = require('./src/AuthManager');
 const StationManager = require('./src/StationManager');
-const StreamingProxyFactory = require('./src/StreamingProxyFactory');
+const StreamPlayerFactory = require('./src/StreamPlayerFactory');
+const MetadataFetcher = require('./src/MetadataFetcher');
+
 
 // Constants
 const DEFAULT_STATION_CODE = 'pln';
@@ -29,8 +31,8 @@ const ControllerPlanetRadio = function (context) {
   self.authManager = new AuthManager(self.logger);
   self.stationManager = new StationManager(self.logger);
 
-  // Streaming proxy will be created based on stream type
-  self.streamingProxy = null;
+  // Stream player will be created based on stream type
+  self.streamPlayer = null;
   self.currentStationInfo = null; // Will store station info including code, name, albumart
 
   // Metadata delay handling
@@ -89,14 +91,14 @@ ControllerPlanetRadio.prototype._cleanupResources = function () {
     }
   }
 
-  // Stop the streaming proxy
-  if (self.streamingProxy) {
+  // Stop the stream player
+  if (self.streamPlayer) {
     try {
-      self.streamingProxy.stop();
+      self.streamPlayer.stop();
     } catch (error) {
-      self.logger.warn('Error stopping streaming proxy during cleanup:', error.message);
+      self.logger.warn('Error stopping stream player during cleanup:', error.message);
     } finally {
-      self.streamingProxy = null;
+      self.streamPlayer = null;
     }
   }
 
@@ -459,16 +461,16 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
   // First authenticate, then get streaming URL with parameters and start proxy
   self.logger.info('Starting clearAddPlayTrack - authenticating first...');
 
-  // Stop any existing streaming proxy
-  if (self.streamingProxy) {
+  // Stop any existing stream player
+  if (self.streamPlayer) {
     try {
-      self.logger.info('Stopping existing streaming proxy...');
-      self.streamingProxy.stop();
-      self.streamingProxy = null;
+      self.logger.info('Stopping existing stream player...');
+      self.streamPlayer.stop();
+      self.streamPlayer = null;
     } catch (error) {
-      self.logger.warn('Error stopping existing streaming proxy:', error.message);
+      self.logger.warn('Error stopping existing stream player:', error.message);
       // Force cleanup even if stop fails
-      self.streamingProxy = null;
+      self.streamPlayer = null;
     }
   }
 
@@ -499,23 +501,40 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
     })
     .then(function (streamUrl) {
       self.logger.info(`Streaming URL received: ${streamUrl}`);
-      self.logger.info('Creating streaming proxy...');
 
-      // Create the appropriate streaming proxy using the factory method
-      self.streamingProxy = StreamingProxyFactory.createProxy(streamUrl, self.logger, self.addAuthParamsToStreamURL.bind(self));
+      // Store streamUrl for later use
+      self.currentStreamUrl = streamUrl;
 
-      // Set up metadata callback for the streaming proxy
-      self.streamingProxy.setMetadataCallback(function (metadata) {
+      // Create metadata fetcher with the station code
+      const metadataFetcher = new MetadataFetcher(self.logger, self.currentStationInfo.code);
+
+      // Create the appropriate stream player using the factory method
+      self.streamPlayer = StreamPlayerFactory.createPlayer(
+        streamUrl, 
+        self.mpdPlugin, 
+        self.logger, 
+        self.addAuthParamsToStreamURL.bind(self),
+        metadataFetcher
+      );
+
+      // Set up metadata callback for the stream player
+      self.streamPlayer.setMetadataCallback(function (metadata) {
         self.pushSongState(metadata);
       });
 
-      self.logger.info('Starting proxy server...');
-      return self.streamingProxy.startProxyServer(streamUrl, self.currentStationInfo.code);
+      // Start the appropriate player based on stream type
+      if (streamUrl.pathname.includes('.m3u8')) {
+        // For M3U8 streams, start the player (this will handle playlist monitoring and MPD queue management)
+        return self.streamPlayer.start(self.currentStationInfo.code);
+      } else {
+        // For direct streams, start the player (this will start the proxy server)
+        return self.streamPlayer.start();
+      }
     })
-    .then(function () {
-      // Update track URI to use local proxy
-      track.uri = self.streamingProxy.getLocalStreamUrl();
-      self.logger.info(`Updated track URI to local proxy: ${track.uri}`);
+    .then(function (streamUri) {
+      // The stream player returns the appropriate URI for MPD
+      track.uri = streamUri;
+      self.logger.info(`Stream player ready, track URI set to: ${track.uri}`);
 
       self.logger.info('Sending MPD stop command...');
       return self.mpdPlugin.sendMpdCommand('stop', []);
@@ -525,8 +544,15 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
       return self.mpdPlugin.sendMpdCommand('clear', []);
     })
     .then(function () {
-      self.logger.info('Sending MPD add command...');
-      return self.mpdPlugin.sendMpdCommand(`add "${track.uri}"`, []);
+      // For M3U8 streams, segments are already in MPD queue, so no need to add
+      // For direct streams, we need to add the proxy URL to MPD
+      if (self.currentStreamUrl.pathname.includes('.m3u8')) {
+        self.logger.info('M3U8 segments already in MPD queue, skipping add command');
+        return Promise.resolve(); // No need to add anything
+      } else {
+        self.logger.info('Sending MPD add command...');
+        return self.mpdPlugin.sendMpdCommand(`add "${track.uri}"`, []);
+      }
     })
     .then(function () {
       self.logger.info('Sending MPD consume command...');
@@ -770,14 +796,14 @@ ControllerPlanetRadio.prototype.resetUIState = function () {
   const self = this;
   self.logger.info('Resetting UI state');
 
-  // Stop and clear streaming proxy
-  if (self.streamingProxy) {
+  // Stop and clear stream player
+  if (self.streamPlayer) {
     try {
-      self.streamingProxy.stop();
+      self.streamPlayer.stop();
     } catch (error) {
-      self.logger.warn('Error stopping streaming proxy during reset:', error.message);
+      self.logger.warn('Error stopping stream player during reset:', error.message);
     } finally {
-      self.streamingProxy = null;
+      self.streamPlayer = null;
     }
   }
 
