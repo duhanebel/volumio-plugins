@@ -507,6 +507,9 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
 
       // Create metadata fetcher with the station code
       const metadataFetcher = new MetadataFetcher(self.logger, self.currentStationInfo.code);
+      metadataFetcher.setMetadataCallback(function (metadata) {
+        self.pushSongState(metadata);
+      });
 
       // Create the appropriate stream player using the factory method
       self.streamPlayer = StreamPlayerFactory.createPlayer(
@@ -517,61 +520,24 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
         metadataFetcher
       );
 
-      // Set up metadata callback for the stream player
-      self.streamPlayer.setMetadataCallback(function (metadata) {
-        self.pushSongState(metadata);
-      });
-
-      // Start the appropriate player based on stream type
-      if (streamUrl.pathname.includes('.m3u8')) {
-        // For M3U8 streams, start the player (this will handle playlist monitoring and MPD queue management)
-        return self.streamPlayer.start(self.currentStationInfo.code);
-      } else {
-        // For direct streams, start the player (this will start the proxy server)
-        return self.streamPlayer.start();
-      }
+      return self.streamPlayer.start();
     })
     .then(function (streamUri) {
       // The stream player returns the appropriate URI for MPD
       track.uri = streamUri;
       self.logger.info(`Stream player ready, track URI set to: ${track.uri}`);
 
-      self.logger.info('Sending MPD stop command...');
-      return self.mpdPlugin.sendMpdCommand('stop', []);
-    })
-    .then(function () {
-      self.logger.info('Sending MPD clear command...');
-      return self.mpdPlugin.sendMpdCommand('clear', []);
-    })
-    .then(function () {
-      // For M3U8 streams, segments are already in MPD queue, so no need to add
-      // For direct streams, we need to add the proxy URL to MPD
-      if (self.currentStreamUrl.pathname.includes('.m3u8')) {
-        self.logger.info('M3U8 segments already in MPD queue, skipping add command');
-        return Promise.resolve(); // No need to add anything
-      } else {
-        self.logger.info('Sending MPD add command...');
-        return self.mpdPlugin.sendMpdCommand(`add "${track.uri}"`, []);
-      }
-    })
-    .then(function () {
-      self.logger.info('Sending MPD consume command...');
-      return self.mpdPlugin.sendMpdCommand('consume 1', []);
-    })
-    .then(function () {
-      self.logger.info('Sending MPD play command...');
+      // Show wait message for radio channel
       self.commandRouter.pushToastMessage('info', self.getRadioI18nString('PLUGIN_NAME'), self.getRadioI18nString('WAIT_FOR_RADIO_CHANNEL'));
 
-      return self.mpdPlugin.sendMpdCommand('play', []);
-    })
-    .then(function () {
-      self.logger.info('All MPD commands completed successfully, updating state...');
+      // Update state to indicate playback has started
       self.state.status = 'play';
       self.commandRouter.servicePushState(self.state, self.serviceName);
       self.logger.info('Playback started successfully');
 
       defer.resolve();
     })
+
     .fail(function (error) {
       const errorMessage = error.message || 'Unknown error occurred';
       self.logger.error(`Failed to start playback: ${errorMessage}`);

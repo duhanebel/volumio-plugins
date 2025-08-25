@@ -36,17 +36,30 @@ class M3U8StreamingPlayer {
 
   /**
    * Start the M3U8 stream
-   * @param {string} stationCode - The station code for metadata
    * @returns {Promise} - Promise that resolves when stream is ready
    */
-  async start(stationCode) {
+  async start() {
     this.logger.info(`Starting M3U8 streaming player for: ${this.url.toString()}`);
     
-    this.stationCode = stationCode;
     
     try {
+      
+      this.logger.info('Sending MPD stop command...');
+      await this.mpdPlugin.sendMpdCommand('stop', []);
+      
+      this.logger.info('Sending MPD clear command...');
+      await this.mpdPlugin.sendMpdCommand('clear', []);
+      
       // Initial setup - fetch and enqueue all segments
       await this.refreshAndEnqueueSegments();
+
+      this.logger.info('Sending MPD consume command...');
+      await this.mpdPlugin.sendMpdCommand('consume 1', []);
+      
+      this.logger.info('Sending MPD play command...');
+      await this.mpdPlugin.sendMpdCommand('play', []);
+      
+      this.logger.info('All MPD commands completed successfully');
       
       // Start monitoring for updates every 10 seconds
       this.startMonitoring();
@@ -116,7 +129,7 @@ class M3U8StreamingPlayer {
       // Check if first segment has new metadata
       if (segments.length > 0 && segments[0].metadataUrl && segments[0].metadataUrl !== this.lastMetadataUrl) {
         this.logger.info(`New metadata URL detected: ${segments[0].metadataUrl}`);
-        await this.updateMetadata(segments[0].metadataUrl);
+        await this.metadataFetcher.fetchAndUpdateMetadata(segments[0].metadataUrl, 'segment');
         this.lastMetadataUrl = segments[0].metadataUrl;
       }
 
@@ -326,23 +339,6 @@ class M3U8StreamingPlayer {
     return 0;
   }
 
-  /**
-   * Update metadata using the metadata fetcher
-   * @param {string} metadataUrl - The metadata URL
-   */
-  async updateMetadata(metadataUrl) {
-    try {
-      const metadata = await this.metadataFetcher.fetchAndUpdateMetadata(metadataUrl, 'segment');
-      this.logger.info(`Metadata updated from: ${metadataUrl}`);
-      
-      // Call the metadata callback if it's set
-      if (this.onMetadataUpdate && metadata) {
-        this.onMetadataUpdate(metadata);
-      }
-    } catch (error) {
-      this.logger.error(`Failed to update metadata: ${error.message}`);
-    }
-  }
 }
 
 module.exports = M3U8StreamingPlayer;

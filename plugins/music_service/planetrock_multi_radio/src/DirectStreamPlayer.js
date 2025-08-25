@@ -37,17 +37,6 @@ class DirectStreamPlayer {
     
     // State
     this.isPlaying = false;
-    this.onMetadataUpdate = null;
-  }
-
-  /**
-   * Set metadata update callback
-   * @param {Function} callback - Function to call when metadata changes
-   */
-  setMetadataCallback(callback) {
-    this.onMetadataUpdate = callback;
-    this.metadataFetcher.setMetadataCallback(callback);
-    this.logger.info('Metadata callback set for direct stream player');
   }
 
   /**
@@ -148,6 +137,23 @@ class DirectStreamPlayer {
       
       // Get the local proxy URL for MPD
       this.localStreamUrl = this.getLocalStreamUrl();
+      
+      this.logger.info('Sending MPD stop command...');
+      await this.mpdPlugin.sendMpdCommand('stop', []);
+      
+      this.logger.info('Sending MPD clear command...');
+      await this.mpdPlugin.sendMpdCommand('clear', []);
+      
+      this.logger.info('Sending MPD add command...');
+      await this.mpdPlugin.sendMpdCommand(`add "${this.localStreamUrl}"`, []);
+      
+      this.logger.info('Sending MPD consume command...');
+      await this.mpdPlugin.sendMpdCommand('consume 1', []);
+      
+      this.logger.info('Sending MPD play command...');
+      await this.mpdPlugin.sendMpdCommand('play', []);
+      
+      this.logger.info('All MPD commands completed successfully');
       
       this.isPlaying = true;
       this.logger.info('Direct stream player started successfully');
