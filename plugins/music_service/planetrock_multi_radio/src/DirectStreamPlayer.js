@@ -37,6 +37,10 @@ class DirectStreamPlayer {
     
     // State
     this.isPlaying = false;
+    
+    // Metadata handling
+    this.isFirstTimeMetadata = true;
+    this.metadataUpdateTimer = null;
   }
 
   /**
@@ -99,7 +103,8 @@ class DirectStreamPlayer {
           self.logger.info(`Parsed metadata object: ${JSON.stringify(metadataObj, null, 2)}`);
 
           if (metadataObj.url) {
-            self.metadataFetcher.fetchAndUpdateMetadata(metadataObj.url, 'EventSource');
+            // Handle metadata with delay logic
+            self.handleMetadataUpdate(metadataObj);
           }
         }
       } catch (error) {
@@ -107,6 +112,8 @@ class DirectStreamPlayer {
       }
     };
   }
+
+
 
   /**
    * Parse metadata string
@@ -122,6 +129,36 @@ class DirectStreamPlayer {
       }
     });
     return metadataObj;
+  }
+
+  /**
+   * Handle metadata update with delay logic
+   * @param {Object} metadata - The metadata object
+   */
+  handleMetadataUpdate(metadata) {
+    // Clear existing timer
+    if (this.metadataUpdateTimer) {
+      clearTimeout(this.metadataUpdateTimer);
+    }
+
+    // Check if this is the first time metadata is being pushed
+    if (this.isFirstTimeMetadata) {
+      // First time - update immediately, no delay
+      this.logger.info('First time metadata - updating immediately');
+      this.isFirstTimeMetadata = false; // Set flag to false for subsequent calls
+
+      // Call metadataFetcher.fetchAndUpdateMetadata immediately
+      this.metadataFetcher.fetchAndUpdateMetadata(metadata.url, 'EventSource');
+    } else {
+      // Subsequent calls - use 10 second delay (hardcoded for direct streaming)
+      const METADATA_DELAY_MS = 10000; // 10 seconds
+      this.logger.info(`Subsequent metadata update - using ${METADATA_DELAY_MS/1000}s delay`);
+
+      this.metadataUpdateTimer = setTimeout(() => {
+        // Call metadataFetcher.fetchAndUpdateMetadata after delay
+        this.metadataFetcher.fetchAndUpdateMetadata(metadata.url, 'M3UPlaylist');
+      }, METADATA_DELAY_MS);
+    }ga
   }
 
   /**
@@ -185,12 +222,19 @@ class DirectStreamPlayer {
         this.eventSource = null;
       }
       
+      // Clear metadata timer
+      if (this.metadataUpdateTimer) {
+        clearTimeout(this.metadataUpdateTimer);
+        this.metadataUpdateTimer = null;
+      }
+      
       // Reset state
       this.streamURL = null;
       this.stationCode = null;
       this.aisSessionId = null;
       this.isPlaying = false;
       this.localStreamUrl = null;
+      this.isFirstTimeMetadata = true;
       
       this.logger.info('Direct stream player stopped');
     } catch (error) {

@@ -18,21 +18,13 @@ class M3U8StreamingPlayer {
     
     // State management
     this.isPlaying = false;
-    this.onMetadataUpdate = null;
     this.lastMetadataUrl = null;
     this.lastAddedProgressiveCounter = 0;
     this.monitoringInterval = null;
     this.currentMediaPlaylistUrl = null;
   }
 
-  /**
-   * Set metadata update callback
-   * @param {Function} callback - Function to call when metadata changes
-   */
-  setMetadataCallback(callback) {
-    this.onMetadataUpdate = callback;
-    this.logger.info('Metadata callback set for M3U8 streaming player');
-  }
+
 
   /**
    * Start the M3U8 stream
@@ -129,6 +121,7 @@ class M3U8StreamingPlayer {
       // Check if first segment has new metadata
       if (segments.length > 0 && segments[0].metadataUrl && segments[0].metadataUrl !== this.lastMetadataUrl) {
         this.logger.info(`New metadata URL detected: ${segments[0].metadataUrl}`);
+        // For M3U8 streaming, update metadata immediately without delay
         await this.metadataFetcher.fetchAndUpdateMetadata(segments[0].metadataUrl, 'segment');
         this.lastMetadataUrl = segments[0].metadataUrl;
       }

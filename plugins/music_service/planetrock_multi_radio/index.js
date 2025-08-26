@@ -10,8 +10,7 @@ const MetadataFetcher = require('./src/MetadataFetcher');
 
 // Constants
 const DEFAULT_STATION_CODE = 'pln';
-const DEFAULT_METADATA_DELAY = 10;
-const DEFAULT_ALBUM_ART = '/albumart?sourceicon=music_service/planet_radio/assets/planet_radio.webp';
+const DEFAULT_ALBUM_ART = '/albumimg?sourceicon=music_service/planet_radio/assets/planet_radio.webp';
 const UNKNOWN_SAMPLERATE = '-';
 const UNKNOWN_BITRATE = '-';
 const STEREO_CHANNELS = 2;
@@ -35,9 +34,7 @@ const ControllerPlanetRadio = function (context) {
   self.streamPlayer = null;
   self.currentStationInfo = null; // Will store station info including code, name, albumart
 
-  // Metadata delay handling
-  self.metadataUpdateTimer = null;
-  self.isFirstMetadataUpdate = true;
+
 };
 
 ControllerPlanetRadio.prototype.onVolumioStart = function () {
@@ -56,8 +53,7 @@ ControllerPlanetRadio.prototype.onStart = function () {
   self.mpdPlugin = this.commandRouter.pluginManager.getPlugin('music_service', 'mpd');
   self.serviceName = SERVICE_NAME;
 
-  // Initialize metadata timing flag
-  self.isFirstTimeMetadata = true;
+
 
   self.addToBrowseSources();
   return libQ.resolve();
@@ -80,16 +76,7 @@ ControllerPlanetRadio.prototype.onStop = function () {
 ControllerPlanetRadio.prototype._cleanupResources = function () {
   const self = this;
 
-  // Clear metadata timer
-  if (self.metadataUpdateTimer) {
-    try {
-      clearTimeout(self.metadataUpdateTimer);
-    } catch (error) {
-      self.logger.warn('Error clearing metadata timer:', error.message);
-    } finally {
-      self.metadataUpdateTimer = null;
-    }
-  }
+
 
   // Stop the stream player
   if (self.streamPlayer) {
@@ -109,7 +96,6 @@ ControllerPlanetRadio.prototype._cleanupResources = function () {
     self.logger.warn('Error resetting UI state during cleanup:', error.message);
   }
 
-  self.isFirstTimeMetadata = true;
 };
 
 ControllerPlanetRadio.prototype.onRestart = function () {
@@ -157,7 +143,7 @@ ControllerPlanetRadio.prototype.getUIConfig = function () {
       // Ensure config values exist, use defaults if not
       const username = self.config.get('username') || '';
       const password = self.config.get('password') || '';
-      const metadataDelay = self.config.get('metadata_delay') || DEFAULT_METADATA_DELAY;
+      const metadataDelay = self.config.get('metadata_delay') || 10; // Hardcoded default for UI config
 
       self.logger.info(`Config values - username: ${username ? 'set' : 'not set'}, password: ${password ? 'set' : 'not set'}, metadataDelay: ${metadataDelay}`);
 
@@ -184,13 +170,11 @@ ControllerPlanetRadio.prototype.getUIConfig = function () {
 
         // Ensure config values exist, use defaults if not
         const username = self.config.get('username') || '';
-        const password = self.config.get('password') || '';
-        const metadataDelay = self.config.get('metadata_delay') || DEFAULT_METADATA_DELAY;
+        const metadataDelay = self.config.get('metadata_delay') || 10; // Hardcoded default for UI config
 
         // Update the UI config with current values
         basicConfig.sections[0].content[0].value = username;
-        basicConfig.sections[0].content[1].value = password;
-        basicConfig.sections[0].content[2].value = metadataDelay;
+        basicConfig.sections[0].content[1].value = metadataDelay;
 
         self.logger.info('Basic UI config loaded successfully as fallback');
         defer.resolve(basicConfig);
@@ -445,18 +429,7 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
 
   self.logger.info('ControllerPlanetRadio::clearAddPlayTrack called');
 
-  // Clear any existing metadata timer
-  if (self.metadataUpdateTimer) {
-    try {
-      clearTimeout(self.metadataUpdateTimer);
-      self.metadataUpdateTimer = null;
-    } catch (error) {
-      self.logger.warn('Error clearing metadata timer:', error.message);
-    }
-  }
 
-  // Reset metadata timing flag for new playback
-  self.isFirstTimeMetadata = true;
 
   // First authenticate, then get streaming URL with parameters and start proxy
   self.logger.info('Starting clearAddPlayTrack - authenticating first...');
@@ -554,42 +527,9 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
   return defer.promise;
 };
 
+
+
 ControllerPlanetRadio.prototype.pushSongState = function (metadata) {
-  const self = this;
-
-  // Clear existing timer
-  if (self.metadataUpdateTimer) {
-    clearTimeout(self.metadataUpdateTimer);
-  }
-
-  // Check if this is the first time metadata is being pushed
-  if (self.isFirstTimeMetadata) {
-    // First time - update immediately, no delay
-    self.logger.info('First time metadata - updating immediately');
-    self.isFirstTimeMetadata = false; // Set flag to false for subsequent calls
-
-    self
-      .pushSongStateImmediate(metadata)
-      .fail(function (error) {
-        self.logger.warn('Non-critical error in first metadata update:', error.message);
-      });
-  } else {
-    // Subsequent calls - use delay
-    const metadataDelay = self.config.get('metadata_delay', DEFAULT_METADATA_DELAY);
-    self.logger.info(`Subsequent metadata update - using ${metadataDelay}s delay`);
-
-    self.metadataUpdateTimer = setTimeout(function () {
-      self.logger.info('Metadata update timer triggered. Fetching MPD status...');
-      self
-        .pushSongStateImmediate(metadata)
-        .fail(function (error) {
-          self.logger.warn('Non-critical error in pushSongState:', error.message);
-        });
-    }, metadataDelay * 1000);
-  }
-};
-
-ControllerPlanetRadio.prototype.pushSongStateImmediate = function (metadata) {
   const self = this;
   const defer = libQ.defer();
 
