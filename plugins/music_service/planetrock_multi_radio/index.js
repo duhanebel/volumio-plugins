@@ -434,13 +434,6 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
   const self = this;
   const defer = libQ.defer();
 
-  self.logger.info('ControllerPlanetRadio::clearAddPlayTrack called');
-
-
-
-  // First authenticate, then get streaming URL with parameters and start proxy
-  self.logger.info('Starting clearAddPlayTrack - authenticating first...');
-
   // Stop any existing stream player
   if (self.streamPlayer) {
     try {
@@ -473,8 +466,6 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
     .then(function (stationInfo) {
       self.logger.info(`Station info received: ${JSON.stringify(stationInfo)}`);
       self.currentStationInfo = stationInfo;
-
-      self.logger.info(`Getting streaming URL for station: ${stationInfo.code}`);
 
       // Get streaming URL (now returns libQ promise directly)
       return self.stationManager.getStreamingURL(stationInfo.code);

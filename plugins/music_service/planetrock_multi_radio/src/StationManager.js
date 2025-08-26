@@ -59,7 +59,7 @@ class StationManager {
 
     // Check if we have cached stations
     if (self.stationsCache) {
-      self.logger.info('Returning cached stations');
+      self.logger.debug('Returning cached stations');
       defer.resolve(self.stationsCache);
       return defer.promise;
     }
@@ -102,9 +102,9 @@ class StationManager {
               // Parse the stream URL and store as URL object
               streamUrl = self._parseUrl(stream.streamUrl);
               if (streamUrl) {
-                self.logger.info(`[getStations] Extracted streamUrl for main station (pln): ${streamUrl.toString()}`);
+                self.logger.debug(`Extracted streamUrl for main station (pln): ${streamUrl.toString()}`);
               } else {
-                self.logger.warn(`[getStations] Failed to parse streamUrl for main station (pln): ${stream.streamUrl}`);
+                self.logger.error(`Failed to parse streamUrl for main station (pln): ${stream.streamUrl}`);
               }
             }
           }
@@ -155,33 +155,26 @@ class StationManager {
     // Check if we have cached streamUrl for this station
     const cachedStation = self._findCachedStation(stationCode);
     if (cachedStation && cachedStation.streamUrl) {
-      self.logger.info(`[getStreamingURL] Returning cached streamUrl for stationCode: ${stationCode}`);
+      self.logger.debug(`Returning cached streamUrl for stationCode: ${stationCode}`);
       defer.resolve(cachedStation.streamUrl);
       return defer.promise;
     }
 
-    self.logger.info(`[getStreamingURL] Resolving stream for stationCode: ${stationCode}`);
-
-    // Convert axios promise to libQ promise
-    const axiosPromise = axios.get(`${self.baseUrl}/initweb/${stationCode}`);
-
-    axiosPromise
+    axios.get(`${self.baseUrl}/initweb/${stationCode}`)
       .then(function (response) {
         const station = response.data;
         let streamUrl = null;
 
         if (Array.isArray(station.stationStreams)) {
-          self.logger.info(`[getStreamingURL] stationStreams for ${stationCode}: ${JSON.stringify(station.stationStreams, null, 2)}`);
+          self.logger.debug(`Available stationStreams for ${stationCode}: ${JSON.stringify(station.stationStreams, null, 2)}`);
 
           const stream = station.stationStreams.find(s => s.streamQuality === 'hq' && s.streamPremium === true);
-
-          self.logger.info(`[getStreamingURL] Stream search result for ${stationCode}: ${JSON.stringify(stream, null, 2)}`);
 
           if (stream) {
             // Parse the stream URL and store as URL object
             streamUrl = self._parseUrl(stream.streamUrl);
             if (!streamUrl) {
-              self.logger.error(`[getStreamingURL] Failed to parse streamUrl for station ${stationCode}: ${stream.streamUrl}`);
+              self.logger.error(`Failed to parse streamUrl for station ${stationCode}: ${stream.streamUrl}`);
               defer.reject(new Error(`Failed to parse stream URL for station ${stationCode}`));
               return;
             }
@@ -189,7 +182,7 @@ class StationManager {
         }
 
         if (!streamUrl) {
-          self.logger.error(`[getStreamingURL] No suitable stream found for station ${stationCode}`);
+          self.logger.error(`No suitable stream found for station ${stationCode}`);
           defer.reject(new Error(`No suitable stream found for station ${stationCode}`));
           return;
         }
@@ -197,13 +190,13 @@ class StationManager {
         // Cache the streamUrl in the stationsCache
         if (cachedStation) {
           cachedStation.streamUrl = streamUrl;
-          self.logger.info(`[getStreamingURL] Cached streamUrl for stationCode: ${stationCode}`);
+          self.logger.debug(`Found cached streamUrl for stationCode: ${stationCode}`);
         }
 
         defer.resolve(streamUrl);
       })
       .catch(function (error) {
-        self.logger.error(`[getStreamingURL] Failed to resolve station stream: ${error.message}`);
+        self.logger.error(`Failed to resolve station stream: ${error.message}`);
         defer.reject(error);
       });
 
@@ -227,7 +220,7 @@ class StationManager {
     // Check if we have cached station info
     const cachedStation = self._findCachedStation(stationCode);
     if (cachedStation) {
-      self.logger.info(`[getStationInfo] Returning cached info for station: ${stationCode}`);
+      self.logger.debug(`Returning cached info for station: ${stationCode}`);
       defer.resolve({
         name: cachedStation.title,
         code: stationCode,
@@ -236,7 +229,7 @@ class StationManager {
       return defer.promise;
     }
 
-    self.logger.info(`[getStationInfo] Fetching info for station: ${stationCode}`);
+    self.logger.debug(`Fetching info for station: ${stationCode}`);
 
     // Convert axios promise to libQ promise
     const axiosPromise = axios.get(`${self.baseUrl}/initweb/${stationCode}`);
@@ -253,7 +246,7 @@ class StationManager {
         });
       })
       .catch(function (error) {
-        self.logger.error(`[getStationInfo] Failed to fetch station info: ${error.message}`);
+        self.logger.error(`Failed to fetch station info: ${error.message}`);
         defer.reject(error);
       });
 
@@ -267,10 +260,8 @@ class StationManager {
    * @returns {URL} - Stream URL object with authentication parameters
    */
   addAuthParameters(streamUrl, userId) {
-    this.logger.info(`[addAuthParameters] Input streamUrl type: ${typeof streamUrl}, value: ${streamUrl}`);
-
     if (!streamUrl) {
-      this.logger.warn('[addAuthParameters] No streamUrl provided');
+      this.logger.warn('Cannot add auth: No streamUrl provided');
       return streamUrl;
     }
 
@@ -303,7 +294,7 @@ class StationManager {
 
       return url;
     } catch (error) {
-      this.logger.error(`[addAuthParameters] Error creating URL: ${error.message}`);
+      this.logger.error(`Error creating auth URL: ${error.message}`);
       return streamUrl; // Return original if URL creation fails
     }
   }

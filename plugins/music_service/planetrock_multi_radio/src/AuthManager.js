@@ -31,12 +31,10 @@ class AuthManager {
 
     // Check if already authenticated and token is still valid
     if (self.isAuthenticated()) {
-      self.logger.info('User already authenticated, returning existing user ID');
+      self.logger.debug('User already authenticated, returning existing user ID');
       defer.resolve(self.userId);
       return defer.promise;
     }
-
-    self.logger.info('Starting authentication process');
 
     // First get the CSRF token
     self
@@ -45,7 +43,6 @@ class AuthManager {
         return self._performLogin(username, password, csrfData);
       })
       .then(function () {
-        self.logger.info(`Authentication successful, user ID: ${self.userId}`);
         defer.resolve(self.userId);
       })
       .fail(function (error) {
@@ -108,16 +105,10 @@ class AuthManager {
     const self = this;
     const defer = libQ.defer();
 
-    self.logger.info('Making CSRF token request to: https://account.planetradio.co.uk/ajax/process-account/');
-
-    // Convert axios promise to libQ promise
-    const axiosPromise = axios.post('https://account.planetradio.co.uk/ajax/process-account/');
-
-    axiosPromise
+    axios.post('https://account.planetradio.co.uk/ajax/process-account/')
       .then(function (response) {
-        self.logger.info(`CSRF Response Status: ${response.status}`);
-        self.logger.info(`CSRF Response Headers: ${JSON.stringify(response.headers, null, 2)}`);
-        self.logger.info(`CSRF Response Body: ${JSON.stringify(response.data, null, 2)}`);
+        self.logger.debug(`CSRF Response Status: ${response.status}`);
+        self.logger.debug(`CSRF Response Body: ${JSON.stringify(response.data, null, 2)}`);
 
         // Get CSRF token from header
         const csrfHeader = response.headers['x-csrf-token'];
@@ -176,8 +167,8 @@ class AuthManager {
       .map(key => `${key}=${loginData[key]}`)
       .join('&');
 
-    self.logger.info(`Making login request with form data: ${formData}`);
-    self.logger.info(
+    self.logger.debug(`Making login request with form data: ${formData}`);
+    self.logger.debug(
       `Login request headers: ${JSON.stringify(
         {
           'Content-Type': 'application/x-www-form-urlencoded',
@@ -189,20 +180,16 @@ class AuthManager {
       )}`
     );
 
-    // Convert axios promise to libQ promise
-    const axiosPromise = axios.post('https://account.planetradio.co.uk/ajax/process-account/', formData, {
+    axios.post('https://account.planetradio.co.uk/ajax/process-account/', formData, {
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         'X-CSRF-Token': JSON.stringify(csrfInfo.csrfData),
         Cookie: csrfInfo.cookies,
       },
-    });
-
-    axiosPromise
+    })
       .then(function (loginResponse) {
-        self.logger.info(`Login Response Status: ${loginResponse.status}`);
-        self.logger.info(`Login Response Headers: ${JSON.stringify(loginResponse.headers, null, 2)}`);
-        self.logger.info(`Login Response Body: ${JSON.stringify(loginResponse.data, null, 2)}`);
+        self.logger.debug(`Login Response Status: ${loginResponse.status}`);
+        self.logger.debug(`Login Response Body: ${JSON.stringify(loginResponse.data, null, 2)}`);
 
         if (loginResponse.data && loginResponse.data.status === loginAPIOKResponse) {
           self.csrfToken = csrfInfo.csrfData.csrf_value;
@@ -229,9 +216,9 @@ class AuthManager {
           if (jwtPayload && jwtPayload.id) {
             self.userId = jwtPayload.id;
             self.jwtExpiry = jwtPayload.exp ? jwtPayload.exp * 1000 : null; // Convert to milliseconds
-            self.logger.info(`Successfully extracted user ID: ${self.userId}`);
+            self.logger.debug(`Successfully extracted user ID: ${self.userId}`);
             if (self.jwtExpiry) {
-              self.logger.info(`JWT token expires at: ${new Date(self.jwtExpiry).toISOString()}`);
+              self.logger.debug(`JWT token expires at: ${new Date(self.jwtExpiry).toISOString()}`);
             }
             defer.resolve();
           } else {

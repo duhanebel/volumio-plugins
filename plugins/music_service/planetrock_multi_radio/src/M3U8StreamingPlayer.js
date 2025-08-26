@@ -107,7 +107,6 @@ class M3U8StreamingPlayer {
         
         // Store the resolved media playlist URL for future use
         this.currentMediaPlaylistUrl = mediaPlaylistUrl;
-        this.logger.info(`Resolved and stored media playlist URL: ${mediaPlaylistUrl.toString()}`);
       }
       
       // Fetch and parse the media playlist
@@ -147,7 +146,7 @@ class M3U8StreamingPlayer {
         const lastNewSegment = newSegments[newSegments.length - 1];
         this.lastAddedProgressiveCounter = this.extractProgressiveCounter(lastNewSegment.segmentUrl);
         
-        this.logger.info(`Added ${newSegments.length} new segments to MPD queue. Last counter: ${this.lastAddedProgressiveCounter}`);
+        this.logger.debug(`Added ${newSegments.length} new segments to MPD queue. Last counter: ${this.lastAddedProgressiveCounter}`);
       } else {
         this.logger.debug('No new segments to add to MPD queue');
       }
@@ -170,8 +169,6 @@ class M3U8StreamingPlayer {
         await this.refreshAndEnqueueSegments();
       }
     }, MONITORING_INTERVAL_MS);
-
-    this.logger.info('Started playlist monitoring (10 second intervals)');
   }
 
   /**
@@ -191,14 +188,12 @@ class M3U8StreamingPlayer {
         },
       });
 
-      this.logger.info(`Fetched playlist from: ${authenticatedPlaylistUrl.toString()}`);
-
       // Check if this is a master playlist (contains stream variants)
       if (response.data.includes('#EXT-X-STREAM-INF:')) {
         const mediaPlaylistUrl = this.parseMasterPlaylist(response.data);
 
         if (mediaPlaylistUrl) {
-          this.logger.info(`Found media playlist URL: ${mediaPlaylistUrl.toString()}`);
+          this.logger.debug(`Found media playlist URL: ${mediaPlaylistUrl.toString()}`);
           return mediaPlaylistUrl;
         }
       }
