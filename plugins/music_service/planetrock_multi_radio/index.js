@@ -24,7 +24,14 @@ const ControllerPlanetRadio = function (context) {
 
   self.context = context;
   self.commandRouter = this.context.coreCommand;
-  self.logger = this.context.logger;
+
+  self.logger = {
+    info: (msg, ...args) => this.context.logger.info(`[PlanetRadio] ${msg}`, ...args),
+    warn: (msg, ...args) => this.context.logger.warn(`[PlanetRadio] ${msg}`, ...args),
+    error: (msg, ...args) => this.context.logger.error(`[PlanetRadio] ${msg}`, ...args),
+    debug: (msg, ...args) => this.context.logger.debug(`[PlanetRadio] ${msg}`, ...args)
+  };
+  
   self.state = {};
   self.stateMachine = self.commandRouter.stateMachine;
   self.authManager = new AuthManager(self.logger);
