@@ -1,7 +1,6 @@
 'use strict';
 
 const axios = require('axios');
-const libQ = require('kew');
 
 class StationManager {
   constructor(logger) {
@@ -45,11 +44,10 @@ class StationManager {
   /**
    * Get all stations for the root content
    * @param {boolean} forceRefresh - Force refresh the cache (default: false)
-   * @returns {libQ.Promise<Array>} - Array of station objects formatted for Volumio UI
+   * @returns {Promise<Array>} - Array of station objects formatted for Volumio UI
    */
-  getStations(forceRefresh = true) {
+  async getStations(forceRefresh = true) {
     const self = this;
-    const defer = libQ.defer();
 
     // Clear cache if force refresh is requested
     if (forceRefresh) {
@@ -60,197 +58,174 @@ class StationManager {
     // Check if we have cached stations
     if (self.stationsCache) {
       self.logger.debug('Returning cached stations');
-      defer.resolve(self.stationsCache);
-      return defer.promise;
+      return self.stationsCache;
     }
 
     self.logger.info(`Fetching stations from: ${self.baseUrl}/initweb/pln`);
 
-    // Fetch main station info
-    // Convert axios promise to libQ promise
-    const axiosPromise = axios.get(`${self.baseUrl}/initweb/pln`);
+    try {
+      // Fetch main station info
+      const response = await axios.get(`${self.baseUrl}/initweb/pln`);
+      
+      if (!response.data) {
+        throw new Error('No station data in API response');
+      }
 
-    axiosPromise
-      .then(function (response) {
-        if (!response.data) {
-          throw new Error('No station data in API response');
-        }
+      const mainStation = response.data; // main station is the root object
+      const brandId = mainStation.stationBrandId;
+      const stations = [mainStation];
 
-        const mainStation = response.data; // main station is the root object
-        const brandId = mainStation.stationBrandId;
-        const stations = [mainStation];
+      // Add related stations with the same brandId
+      if (Array.isArray(response.data.stationBrandRelated)) {
+        response.data.stationBrandRelated.forEach(station => {
+          if (station.stationBrandId === brandId) {
+            stations.push(station);
+          }
+        });
+      }
 
-        // Add related stations with the same brandId
-        if (Array.isArray(response.data.stationBrandRelated)) {
-          response.data.stationBrandRelated.forEach(station => {
-            if (station.stationBrandId === brandId) {
-              stations.push(station);
-            }
-          });
-        }
+      // Build items for Volumio UI
+      const items = stations.map(station => {
+        // For all stations, use custom URI for on-demand resolution
+        const uri = `planetradio/${station.stationCode}`;
 
-        // Build items for Volumio UI
-        const items = stations.map(station => {
-          // For all stations, use custom URI for on-demand resolution
-          const uri = `planetradio/${station.stationCode}`;
-
-          // Extract streamUrl for the main station (pln) if available
-          let streamUrl = null;
-          if (station.stationCode === 'pln' && Array.isArray(station.stationStreams)) {
-            const stream = station.stationStreams.find(s => s.streamQuality === 'hq' && s.streamPremium === true);
-            if (stream) {
-              // Parse the stream URL and store as URL object
-              streamUrl = self._parseUrl(stream.streamUrl);
-              if (streamUrl) {
-                self.logger.debug(`Extracted streamUrl for main station (pln): ${streamUrl.toString()}`);
-              } else {
-                self.logger.error(`Failed to parse streamUrl for main station (pln): ${stream.streamUrl}`);
-              }
+        // Extract streamUrl for the main station (pln) if available
+        let streamUrl = null;
+        if (station.stationCode === 'pln' && Array.isArray(station.stationStreams)) {
+          const stream = station.stationStreams.find(s => s.streamQuality === 'hq' && s.streamPremium === true);
+          if (stream) {
+            // Parse the stream URL and store as URL object
+            streamUrl = self._parseUrl(stream.streamUrl);
+            if (streamUrl) {
+              self.logger.debug(`Extracted streamUrl for main station (pln): ${streamUrl.toString()}`);
+            } else {
+              self.logger.error(`Failed to parse streamUrl for main station (pln): ${stream.streamUrl}`);
             }
           }
+        }
 
-          return {
-            service: 'planet_radio',
-            type: 'mywebradio',
-            title: station.stationName,
-            artist: station.stationStrapline,
-            album: null,
-            icon: 'fa fa-music',
-            uri,
-            streamType: 'aac',
-            stationCode: station.stationCode,
-            streamUrl, // Will be populated for main station, null for others
-            albumart: station.stationSquareLogo,
-          };
-        });
-
-        // Cache the stations
-        self.stationsCache = items;
-        self.logger.info(`Cached ${items.length} stations`);
-
-        defer.resolve(items);
-      })
-      .catch(function (error) {
-        self.logger.error(`Failed to fetch stations: ${error.message}`);
-        defer.reject(error);
+        return {
+          service: 'planet_radio',
+          type: 'mywebradio',
+          title: station.stationName,
+          artist: station.stationStrapline,
+          album: null,
+          icon: 'fa fa-music',
+          uri,
+          streamType: 'aac',
+          stationCode: station.stationCode,
+          streamUrl, // Will be populated for main station, null for others
+          albumart: station.stationSquareLogo,
+        };
       });
 
-    return defer.promise;
+      // Cache the stations
+      self.stationsCache = items;
+      self.logger.info(`Cached ${items.length} stations`);
+
+      return items;
+    } catch (error) {
+      self.logger.error(`Failed to fetch stations: ${error.message}`);
+      throw error;
+    }
   }
 
   /**
    * Get streaming URL for a specific station
    * @param {string} stationCode - The station code (e.g., 'pln', 'kerrang', etc.)
-   * @returns {libQ.Promise<Object>} - streamUrl (URL objects)
+   * @returns {Promise<Object>} - streamUrl (URL objects)
    */
-  getStreamingURL(stationCode) {
+  async getStreamingURL(stationCode) {
     const self = this;
-    const defer = libQ.defer();
 
     if (!stationCode) {
-      defer.reject(new Error('Station code is required'));
-      return defer.promise;
+      throw new Error('Station code is required');
     }
 
     // Check if we have cached streamUrl for this station
     const cachedStation = self._findCachedStation(stationCode);
     if (cachedStation && cachedStation.streamUrl) {
       self.logger.debug(`Returning cached streamUrl for stationCode: ${stationCode}`);
-      defer.resolve(cachedStation.streamUrl);
-      return defer.promise;
+      return cachedStation.streamUrl;
     }
 
-    axios.get(`${self.baseUrl}/initweb/${stationCode}`)
-      .then(function (response) {
-        const station = response.data;
-        let streamUrl = null;
+    try {
+      const response = await axios.get(`${self.baseUrl}/initweb/${stationCode}`);
+      const station = response.data;
+      let streamUrl = null;
 
-        if (Array.isArray(station.stationStreams)) {
-          self.logger.debug(`Available stationStreams for ${stationCode}: ${JSON.stringify(station.stationStreams, null, 2)}`);
+      if (Array.isArray(station.stationStreams)) {
+        self.logger.debug(`Available stationStreams for ${stationCode}: ${JSON.stringify(station.stationStreams, null, 2)}`);
 
-          const stream = station.stationStreams.find(s => s.streamQuality === 'hq' && s.streamPremium === true);
+        const stream = station.stationStreams.find(s => s.streamQuality === 'hq' && s.streamPremium === true);
 
-          if (stream) {
-            // Parse the stream URL and store as URL object
-            streamUrl = self._parseUrl(stream.streamUrl);
-            if (!streamUrl) {
-              self.logger.error(`Failed to parse streamUrl for station ${stationCode}: ${stream.streamUrl}`);
-              defer.reject(new Error(`Failed to parse stream URL for station ${stationCode}`));
-              return;
-            }
+        if (stream) {
+          // Parse the stream URL and store as URL object
+          streamUrl = self._parseUrl(stream.streamUrl);
+          if (!streamUrl) {
+            self.logger.error(`Failed to parse streamUrl for station ${stationCode}: ${stream.streamUrl}`);
+            throw new Error(`Failed to parse stream URL for station ${stationCode}`);
           }
         }
+      }
 
-        if (!streamUrl) {
-          self.logger.error(`No suitable stream found for station ${stationCode}`);
-          defer.reject(new Error(`No suitable stream found for station ${stationCode}`));
-          return;
-        }
+      if (!streamUrl) {
+        self.logger.error(`No suitable stream found for station ${stationCode}`);
+        throw new Error(`No suitable stream found for station ${stationCode}`);
+      }
 
-        // Cache the streamUrl in the stationsCache
-        if (cachedStation) {
-          cachedStation.streamUrl = streamUrl;
-          self.logger.debug(`Found cached streamUrl for stationCode: ${stationCode}`);
-        }
+      // Cache the streamUrl in the stationsCache
+      if (cachedStation) {
+        cachedStation.streamUrl = streamUrl;
+        self.logger.debug(`Found cached streamUrl for stationCode: ${stationCode}`);
+      }
 
-        defer.resolve(streamUrl);
-      })
-      .catch(function (error) {
-        self.logger.error(`Failed to resolve station stream: ${error.message}`);
-        defer.reject(error);
-      });
-
-    return defer.promise;
+      return streamUrl;
+    } catch (error) {
+      self.logger.error(`Failed to resolve station stream: ${error.message}`);
+      throw error;
+    }
   }
 
   /**
    * Get station info for a specific station code
    * @param {string} stationCode - The station code
-   * @returns {libQ.Promise<Object>} - Station information
+   * @returns {Promise<Object>} - Station information
    */
-  getStationInfo(stationCode) {
+  async getStationInfo(stationCode) {
     const self = this;
-    const defer = libQ.defer();
 
     if (!stationCode) {
-      defer.reject(new Error('Station code is required'));
-      return defer.promise;
+      throw new Error('Station code is required');
     }
 
     // Check if we have cached station info
     const cachedStation = self._findCachedStation(stationCode);
     if (cachedStation) {
       self.logger.debug(`Returning cached info for station: ${stationCode}`);
-      defer.resolve({
+      return {
         name: cachedStation.title,
         code: stationCode,
         albumart: cachedStation.albumart,
-      });
-      return defer.promise;
+      };
     }
 
     self.logger.debug(`Fetching info for station: ${stationCode}`);
 
-    // Convert axios promise to libQ promise
-    const axiosPromise = axios.get(`${self.baseUrl}/initweb/${stationCode}`);
+    try {
+      const response = await axios.get(`${self.baseUrl}/initweb/${stationCode}`);
+      const station = response.data;
 
-    axiosPromise
-      .then(function (response) {
-        const station = response.data;
-
-        defer.resolve({
-          name: station.stationName,
-          code: stationCode,
-          stationStrapline: station.stationStrapline,
-          albumart: station.stationSquareLogo,
-        });
-      })
-      .catch(function (error) {
-        self.logger.error(`Failed to fetch station info: ${error.message}`);
-        defer.reject(error);
-      });
-
-    return defer.promise;
+      return {
+        name: station.stationName,
+        code: stationCode,
+        stationStrapline: station.stationStrapline,
+        albumart: station.stationSquareLogo,
+      };
+    } catch (error) {
+      self.logger.error(`Failed to fetch station info: ${error.message}`);
+      throw error;
+    }
   }
 
   /**

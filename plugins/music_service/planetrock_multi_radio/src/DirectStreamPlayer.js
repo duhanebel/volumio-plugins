@@ -1,6 +1,5 @@
 'use strict';
 
-const libQ = require('kew');
 const axios = require('axios');
 
 // Constants
@@ -158,7 +157,7 @@ class DirectStreamPlayer {
         // Call metadataFetcher.fetchAndUpdateMetadata after delay
         this.metadataFetcher.fetchAndUpdateMetadata(metadata.url, 'M3UPlaylist');
       }, METADATA_DELAY_MS);
-    }ga
+    }
   }
 
   /**
@@ -258,7 +257,6 @@ class DirectStreamPlayer {
    */
   startProxyServer(streamUrl, stationCode) {
     const self = this;
-    const defer = libQ.defer();
 
     // Store current stream info
     self.streamURL = streamUrl;
@@ -281,25 +279,26 @@ class DirectStreamPlayer {
       // Add error handling for the server
       self.proxyServer.on('error', function (error) {
         self.logger.error(`Proxy server error: ${error.message}`);
-        defer.reject(error);
+        throw error;
       });
 
-      self.proxyServer.listen(0, function () {
-        try {
-          self.proxyPort = self.proxyServer.address().port;
-          self.logger.info(`Proxy server listening on port ${self.proxyPort}`);
-          defer.resolve();
-        } catch (error) {
-          self.logger.error(`Failed to get proxy server port: ${error.message}`);
-          defer.reject(error);
-        }
+      // Return a promise that resolves when the server is listening
+      return new Promise((resolve, reject) => {
+        self.proxyServer.listen(0, function () {
+          try {
+            self.proxyPort = self.proxyServer.address().port;
+            self.logger.info(`Proxy server listening on port ${self.proxyPort}`);
+            resolve();
+          } catch (error) {
+            self.logger.error(`Failed to get proxy server port: ${error.message}`);
+            reject(error);
+          }
+        });
       });
     } catch (error) {
       self.logger.error(`Failed to create proxy server: ${error.message}`);
-      defer.reject(error);
+      throw error;
     }
-
-    return defer.promise;
   }
 
   /**
