@@ -144,14 +144,10 @@ ControllerPlanetRadio.prototype.getUIConfig = function () {
       // Ensure config values exist, use defaults if not
       const username = self.config.get('username') || '';
       const password = self.config.get('password') || '';
-      const metadataDelay = self.config.get('metadata_delay') || 10; // Hardcoded default for UI config
-
-      self.logger.info(`Config values - username: ${username ? 'set' : 'not set'}, password: ${password ? 'set' : 'not set'}, metadataDelay: ${metadataDelay}`);
 
       // Update the UI config with current values
       uiconf.sections[0].content[0].value = username;
       uiconf.sections[0].content[1].value = password;
-      uiconf.sections[0].content[2].value = metadataDelay;
 
       defer.resolve(uiconf);
     })
@@ -171,11 +167,9 @@ ControllerPlanetRadio.prototype.getUIConfig = function () {
 
         // Ensure config values exist, use defaults if not
         const username = self.config.get('username') || '';
-        const metadataDelay = self.config.get('metadata_delay') || 10; // Hardcoded default for UI config
 
         // Update the UI config with current values
         basicConfig.sections[0].content[0].value = username;
-        basicConfig.sections[0].content[1].value = metadataDelay;
 
         self.logger.info('Basic UI config loaded successfully as fallback');
         defer.resolve(basicConfig);
@@ -262,11 +256,6 @@ ControllerPlanetRadio.prototype._updateConfig = function (data) {
 
   if (self.config.get('password') !== data['password']) {
     self.config.set('password', data['password']);
-    configUpdated = true;
-  }
-
-  if (self.config.get('metadata_delay') !== data['metadata_delay']) {
-    self.config.set('metadata_delay', data['metadata_delay']);
     configUpdated = true;
   }
 

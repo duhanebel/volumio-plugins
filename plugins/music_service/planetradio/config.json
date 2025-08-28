@@ -10,9 +10,5 @@
     "password": {
         "type": "string",
         "value": ""
-    },
-    "metadata_delay": {
-        "type": "number",
-        "value": 10
     }
 }

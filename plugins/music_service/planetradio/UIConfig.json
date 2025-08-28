@@ -37,17 +37,6 @@
                     "placeholder": "TRANSLATE.CONFIG.PASSWORD_PLACEHOLDER",
                     "value": "",
                     "type": "password"
-                },
-                {
-                    "id": "metadata_delay",
-                    "element": "input",
-                    "label": "TRANSLATE.CONFIG.METADATA_DELAY",
-                    "description": "TRANSLATE.CONFIG.METADATA_DESCRIPTION",
-                    "placeholder": "TRANSLATE.CONFIG.METADATA_DELAY_PLACEHOLDER",
-                    "value": "10",
-                    "type": "number",
-                    "min": 0,
-                    "max": 60
                 }
             ]
         },

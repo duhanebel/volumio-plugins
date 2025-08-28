@@ -17,10 +17,6 @@
         "PASSWORD": "Password",
         "PASSWORD_PLACEHOLDER": "Enter your Planet Radio password",
         "SAVE": "Save",
-        "METADATA": "Metadata Settings",
-        "METADATA_DESCRIPTION": "Configure how metadata is displayed",
-        "METADATA_DELAY": "Metadata Update Delay (seconds)",
-        "METADATA_DELAY_PLACEHOLDER": "Enter delay in seconds",
         "ABOUT": "About",
         "DESCRIPTION": "Planet Radio plugin for Volumio"
     }
