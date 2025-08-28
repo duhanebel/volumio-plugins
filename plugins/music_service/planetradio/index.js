@@ -11,7 +11,7 @@ const MetadataFetcher = require('./src/MetadataFetcher');
 
 // Constants
 const DEFAULT_STATION_CODE = 'pln';
-const DEFAULT_ALBUM_ART = '/albumimg?sourceicon=music_service/planet_radio/assets/planet_radio.webp';
+const DEFAULT_ALBUM_ART = '/albumart?sourceicon=music_service/planet_radio/assets/planet_radio.webp';
 const UNKNOWN_SAMPLERATE = '-';
 const UNKNOWN_BITRATE = '-';
 const STEREO_CHANNELS = 2;
