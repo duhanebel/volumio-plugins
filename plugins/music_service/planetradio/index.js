@@ -57,8 +57,6 @@ ControllerPlanetRadio.prototype.onStart = function () {
   self.mpdPlugin = this.commandRouter.pluginManager.getPlugin('music_service', 'mpd');
   self.serviceName = SERVICE_NAME;
 
-
-
   self.addToBrowseSources();
   return libQ.resolve();
 };
@@ -67,37 +65,10 @@ ControllerPlanetRadio.prototype.onStop = function () {
   const self = this;
   self.logger.info('Plugin stopping - cleaning up all resources');
 
-  // Use centralized cleanup method
-  self._cleanupResources();
-
+  self.commandRouter.volumioStop();
   return libQ.resolve();
 };
 
-/**
- * Centralized cleanup method for all plugin resources
- * @private
- */
-ControllerPlanetRadio.prototype._cleanupResources = async function () {
-  const self = this;
-
-  // Stop the stream player
-  if (self.streamPlayer) {
-    try {
-      await self.streamPlayer.stop();
-    } catch (error) {
-      self.logger.warn('Error stopping stream player during cleanup:', error.message);
-    } finally {
-      self.streamPlayer = null;
-    }
-  }
-
-  // Reset UI state
-  try {
-    await self._resetUIState();
-  } catch (error) {
-    self.logger.warn('Error resetting UI state during cleanup:', error.message);
-  }
-};
 
 ControllerPlanetRadio.prototype.onRestart = function () {
   return libQ.resolve();
@@ -536,20 +507,19 @@ ControllerPlanetRadio.prototype.stop = function () {
   const defer = libQ.defer();
 
   // Stop MPD playback first
-  self.mpdPlugin.stop()
-    .then(() => {
-      return self.mpdPlugin.sendMpdCommand('clear', []);
-    })
-    .then(() => {
+
+  if (self.streamPlayer) {
+    try {
+      self.streamPlayer.stop();
+    } catch (error) {
+      self.logger.warn('Error stopping stream player during cleanup:', error.message);
+    } finally {
       self.logger.info('MPD playback stopped successfully');
       self._updateVolumioState({ status: 'stop' });
-      self._cleanupResources();
+      self._resetUIState();
       defer.resolve();
-    })
-    .catch(error => {
-      self.logger.error(`Failed to stop MPD playback: ${error.message}`);
-      defer.reject(error);
-    });
+    }
+  }
 
   return defer.promise;
 };
@@ -645,25 +615,13 @@ ControllerPlanetRadio.prototype._updateVolumioState = function (stateObject) {
   self.commandRouter.servicePushState(self.state, self.serviceName);
 };
 
-ControllerPlanetRadio.prototype._resetUIState = async function () {
+ControllerPlanetRadio.prototype._resetUIState = function () {
   const self = this;
-  self.logger.info('Resetting UI state');
-
-  // Stop and clear stream player
-  if (self.streamPlayer) {
-    try {
-      self.streamPlayer.stop();
-    } catch (error) {
-      self.logger.warn('Error stopping stream player during reset:', error.message);
-    } finally {
-      self.streamPlayer = null;
-    }
-  }
-
+  
   // Use stored station info for UI display
   if (self.currentStationInfo) {
     // Reset UI state using the centralized update function with stored station info
-    await self._updateVolumioState({
+    self._updateVolumioState({
       status: 'stop',
       albumart: self.currentStationInfo.albumart || DEFAULT_ALBUM_ART,
       artist: 'Planet Radio',
@@ -677,8 +635,6 @@ ControllerPlanetRadio.prototype._resetUIState = async function () {
 
   // Reset streaming state after updating UI
   self.currentStationInfo = null;
-
-  self.logger.info('UI state reset completed');
 };
 
 module.exports = ControllerPlanetRadio;

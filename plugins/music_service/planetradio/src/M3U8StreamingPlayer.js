@@ -69,10 +69,12 @@ class M3U8StreamingPlayer {
   /**
    * Stop the M3U8 stream
    */
-  stop() {
+  async stop() {
     this.logger.info('Stopping M3U8 streaming player');
     
     this.isPlaying = false;
+    await this.mpdPlugin.stop();
+    await this.mpdPlugin.sendMpdCommand('clear', []);
     
     if (this.monitoringInterval) {
       clearInterval(this.monitoringInterval);

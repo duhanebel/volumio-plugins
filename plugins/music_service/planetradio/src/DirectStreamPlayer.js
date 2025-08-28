@@ -204,10 +204,13 @@ class DirectStreamPlayer {
   /**
    * Stop the direct stream
    */
-  stop() {
+  async stop() {
     this.logger.info('Stopping direct stream player');
     
     try {
+      await this.mpdPlugin.stop();
+      await this.mpdPlugin.sendMpdCommand('clear', []);
+
       // Stop the proxy server
       if (this.proxyServer) {
         this.proxyServer.close();
