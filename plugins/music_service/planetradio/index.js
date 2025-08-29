@@ -35,6 +35,7 @@ const ControllerPlanetRadio = function (context) {
   
   self.authManager = new AuthManager(self.logger);
   self.stationManager = new StationManager(self.logger);
+  self.state = {};
 
   self.streamPlayer = null;
   self.currentStationInfo = null; // Will store station info including code, name, albumart
@@ -427,11 +428,6 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
     .catch(error => {
       const errorMessage = error.message || 'Unknown error occurred';
       self.logger.error(`Failed to start playback: ${errorMessage}`);
-
-      // Log additional context for debugging
-      if (error.stack) {
-        self.logger.error('Error stack trace:', error.stack);
-      }
 
       self.commandRouter.pushToastMessage('error', self._getRadioI18nString('PLUGIN_NAME'), self._getRadioI18nString('ERROR_STREAMING'));
       defer.reject(new Error(self._getRadioI18nString('ERROR_STREAMING')));
