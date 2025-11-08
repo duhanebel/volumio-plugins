@@ -165,9 +165,9 @@ AmpStatusLedController.prototype.saveOptions = function(data) {
 AmpStatusLedController.prototype.ampGPIOInit = function() {
     var self = this;
 
-    self.redPin = new Gpio(self.config.get('red_gpio'),'out');
-    self.greenPin = new Gpio(self.config.get('green_gpio'),'out');
-    self.bluePin = new Gpio(self.config.get('blue_gpio'),'out');
+    self.redPin = new Gpio(self.config.get('red_gpio') + 512,'out');
+    self.greenPin = new Gpio(self.config.get('green_gpio') + 512,'out');
+    self.bluePin = new Gpio(self.config.get('blue_gpio') + 512,'out');
 };
 
 // a pushState event has happened. Check whether it differs from the last known status and
