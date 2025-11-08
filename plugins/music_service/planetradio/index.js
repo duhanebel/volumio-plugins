@@ -217,28 +217,46 @@ ControllerPlanetRadio.prototype.handleBrowseUri = function (curUri) {
   }
 };
 
-ControllerPlanetRadio.prototype._updateConfig = function (data) {
+ControllerPlanetRadio.prototype.updateConfig = function (data) {
   const self = this;
-  let configUpdated = false;
+  const defer = libQ.defer();
 
-  if (self.config.get('username') !== data['username']) {
-    self.config.set('username', data['username']);
-    configUpdated = true;
+  try {
+    // Ensure config is loaded before proceeding
+    if (!self.config) {
+      self.logger.warn('Configuration not yet loaded, loading now...');
+      self.configFile = this.commandRouter.pluginManager.getConfigurationFile(this.context, 'config.json');
+      self.getConf(self.configFile);
+    }
+
+    let configUpdated = false;
+
+    if (self.config.get('username') !== data['username']) {
+      self.config.set('username', data['username']);
+      configUpdated = true;
+    }
+
+    if (self.config.get('password') !== data['password']) {
+      self.config.set('password', data['password']);
+      configUpdated = true;
+    }
+
+    if (configUpdated) {
+      // Clear any existing auth tokens when credentials change
+      self.authManager.clearAuth();
+
+      // Save the configuration to file
+      self.config.saveFile();
+      self.logger.info('Configuration updated and saved');
+    }
+
+    defer.resolve({});
+  } catch (error) {
+    self.logger.error(`Error updating configuration: ${error.message}`);
+    defer.reject(error);
   }
 
-  if (self.config.get('password') !== data['password']) {
-    self.config.set('password', data['password']);
-    configUpdated = true;
-  }
-
-  if (configUpdated) {
-    // Clear any existing auth tokens when credentials change
-    self.authManager.clearAuth();
-
-    // Save the configuration to file
-    self.config.saveFile();
-    self.logger.info('Configuration updated and saved');
-  }
+  return defer.promise;
 };
 
 ControllerPlanetRadio.prototype._authenticate = async function () {
