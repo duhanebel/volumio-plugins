@@ -11,7 +11,7 @@
   "RED_GPIO_DOC": "GPIO pin connected to the LED's red pin (BCM format)",
   "GREEN_GPIO": "Green LED GPIO",
   "GREEN_GPIO_DOC": "GPIO pin connected to the LED's green pin (BCM format)",
-  "BLUE_GPIO": "Green LED GPIO",
+  "BLUE_GPIO": "Blue LED GPIO",
   "BLUE_GPIO_DOC": "GPIO pin connected to the LED's blue pin (BCM format)",
   "SAVE":"Save"
 }
