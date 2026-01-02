@@ -12,10 +12,10 @@ class M3U8StreamingPlayer {
     this.mpdPlugin = mpdPlugin;
     this.logger = logger;
     this.addAuthParamsCallback = addAuthParamsCallback;
-    
+
     // Use passed metadata fetcher
     this.metadataFetcher = metadataFetcher;
-    
+
     // State management
     this.isPlaying = false;
     this.lastMetadataUrl = null;
@@ -24,41 +24,37 @@ class M3U8StreamingPlayer {
     this.currentMediaPlaylistUrl = null;
   }
 
-
-
   /**
    * Start the M3U8 stream
    * @returns {Promise} - Promise that resolves when stream is ready
    */
   async start() {
     this.logger.info(`Starting M3U8 streaming player for: ${this.url.toString()}`);
-    
-    
+
     try {
-      
       this.logger.info('Sending MPD stop command...');
       await this.mpdPlugin.sendMpdCommand('stop', []);
-      
+
       this.logger.info('Sending MPD clear command...');
       await this.mpdPlugin.sendMpdCommand('clear', []);
-      
+
       // Initial setup - fetch and enqueue all segments
       await this.refreshAndEnqueueSegments();
 
       this.logger.info('Sending MPD consume command...');
       await this.mpdPlugin.sendMpdCommand('consume 1', []);
-      
+
       this.logger.info('Sending MPD play command...');
       await this.mpdPlugin.sendMpdCommand('play', []);
-      
+
       this.logger.info('All MPD commands completed successfully');
-      
+
       // Start monitoring for updates every 10 seconds
       this.startMonitoring();
-      
+
       this.isPlaying = true;
       this.logger.info('M3U8 streaming player started successfully');
-      
+
       return 'mpd://'; // Return MPD protocol since segments are in queue
     } catch (error) {
       this.logger.error(`Failed to start M3U8 streaming player: ${error.message}`);
@@ -71,11 +67,11 @@ class M3U8StreamingPlayer {
    */
   async stop() {
     this.logger.info('Stopping M3U8 streaming player');
-    
+
     this.isPlaying = false;
     await this.mpdPlugin.stop();
     await this.mpdPlugin.sendMpdCommand('clear', []);
-    
+
     if (this.monitoringInterval) {
       clearInterval(this.monitoringInterval);
       this.monitoringInterval = null;
@@ -85,7 +81,7 @@ class M3U8StreamingPlayer {
     this.lastMetadataUrl = null;
     this.lastAddedProgressiveCounter = 0;
     this.currentMediaPlaylistUrl = null;
-    
+
     this.logger.info('M3U8 streaming player stopped');
   }
 
@@ -96,24 +92,24 @@ class M3U8StreamingPlayer {
     try {
       // First, try to resolve master playlist to get the media playlist URL
       let mediaPlaylistUrl = this.currentMediaPlaylistUrl;
-      
+
       if (!mediaPlaylistUrl) {
         // First time - resolve the master playlist
         mediaPlaylistUrl = await this.resolveMasterPlaylist(this.url);
-        
+
         // If no media playlist URL found, assume this.url is already a media playlist
         if (!mediaPlaylistUrl) {
           mediaPlaylistUrl = this.url;
           this.logger.info('Using provided URL as media playlist (not a master playlist)');
         }
-        
+
         // Store the resolved media playlist URL for future use
         this.currentMediaPlaylistUrl = mediaPlaylistUrl;
       }
-      
+
       // Fetch and parse the media playlist
       const segments = await this.fetchM3u8Playlist(mediaPlaylistUrl);
-      
+
       if (segments.length === 0) {
         this.logger.warn('No segments found in refreshed playlist');
         return;
@@ -135,7 +131,7 @@ class M3U8StreamingPlayer {
 
       if (newSegments.length > 0) {
         this.logger.info(`Found ${newSegments.length} new segments to add to MPD queue`);
-        
+
         // Add new segments to MPD queue
         for (const segment of newSegments) {
           // Add authentication to the segment URL before adding to MPD
@@ -147,7 +143,7 @@ class M3U8StreamingPlayer {
         // Update the last counter we added
         const lastNewSegment = newSegments[newSegments.length - 1];
         this.lastAddedProgressiveCounter = this.extractProgressiveCounter(lastNewSegment.segmentUrl);
-        
+
         this.logger.debug(`Added ${newSegments.length} new segments to MPD queue. Last counter: ${this.lastAddedProgressiveCounter}`);
       } else {
         this.logger.debug('No new segments to add to MPD queue');
@@ -182,7 +178,7 @@ class M3U8StreamingPlayer {
     try {
       // Add authentication to the master playlist URL before fetching
       const authenticatedPlaylistUrl = this.addAuthParamsCallback(playlistUrl);
-      
+
       const response = await axios.get(authenticatedPlaylistUrl.toString(), {
         headers: {
           Accept: 'application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*',
@@ -242,7 +238,7 @@ class M3U8StreamingPlayer {
     try {
       // Add authentication to the playlist URL before fetching
       const authenticatedPlaylistUrl = this.addAuthParamsCallback(playlistUrl);
-      
+
       const response = await axios.get(authenticatedPlaylistUrl.toString(), {
         headers: {
           Accept: 'application/vnd.apple.mpegurl, application/x-mpegURL, text/plain, */*',
@@ -328,7 +324,6 @@ class M3U8StreamingPlayer {
     }
     return 0;
   }
-
 }
 
 module.exports = M3U8StreamingPlayer;

@@ -66,7 +66,7 @@ class StationManager {
     try {
       // Fetch main station info
       const response = await axios.get(`${self.baseUrl}/initweb/pln`);
-      
+
       if (!response.data) {
         throw new Error('No station data in API response');
       }

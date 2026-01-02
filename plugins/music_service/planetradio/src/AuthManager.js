@@ -96,7 +96,7 @@ class AuthManager {
 
     try {
       const response = await axios.post('https://account.planetradio.co.uk/ajax/process-account/');
-      
+
       self.logger.debug(`CSRF Response Status: ${response.status}`);
       self.logger.debug(`CSRF Response Body: ${JSON.stringify(response.data, null, 2)}`);
 

@@ -18,25 +18,25 @@ class DirectStreamPlayer {
     this.mpdPlugin = mpdPlugin;
     this.logger = logger;
     this.addAuthParamsCallback = addAuthParamsCallback;
-    
+
     // Use passed metadata fetcher
     this.metadataFetcher = metadataFetcher;
-    
+
     // Proxy server state
     this.proxyServer = null;
     this.proxyPort = null;
-    
+
     // Current stream info
     this.streamURL = null;
     this.stationCode = null;
-    
+
     // EventSource for live metadata
     this.eventSource = null;
     this.aisSessionId = null;
-    
+
     // State
     this.isPlaying = false;
-    
+
     // Metadata handling
     this.isFirstTimeMetadata = true;
     this.metadataUpdateTimer = null;
@@ -112,8 +112,6 @@ class DirectStreamPlayer {
     };
   }
 
-
-
   /**
    * Parse metadata string
    * @param {string} metadata - The metadata string
@@ -151,7 +149,7 @@ class DirectStreamPlayer {
     } else {
       // Subsequent calls - use 10 second delay (hardcoded for direct streaming)
       const METADATA_DELAY_MS = 10000; // 10 seconds
-      this.logger.info(`Subsequent metadata update - using ${METADATA_DELAY_MS/1000}s delay`);
+      this.logger.info(`Subsequent metadata update - using ${METADATA_DELAY_MS / 1000}s delay`);
 
       this.metadataUpdateTimer = setTimeout(() => {
         // Call metadataFetcher.fetchAndUpdateMetadata after delay
@@ -166,34 +164,34 @@ class DirectStreamPlayer {
    */
   async start() {
     this.logger.info(`Starting direct stream player for: ${this.url.toString()}`);
-    
+
     try {
       // Start the proxy server
       await this.startProxyServer(this.url, 'direct');
-      
+
       // Get the local proxy URL for MPD
       this.localStreamUrl = this.getLocalStreamUrl();
-      
+
       this.logger.info('Sending MPD stop command...');
       await this.mpdPlugin.sendMpdCommand('stop', []);
-      
+
       this.logger.info('Sending MPD clear command...');
       await this.mpdPlugin.sendMpdCommand('clear', []);
-      
+
       this.logger.info('Sending MPD add command...');
       await this.mpdPlugin.sendMpdCommand(`add "${this.localStreamUrl}"`, []);
-      
+
       this.logger.info('Sending MPD consume command...');
       await this.mpdPlugin.sendMpdCommand('consume 1', []);
-      
+
       this.logger.info('Sending MPD play command...');
       await this.mpdPlugin.sendMpdCommand('play', []);
-      
+
       this.logger.info('All MPD commands completed successfully');
-      
+
       this.isPlaying = true;
       this.logger.info('Direct stream player started successfully');
-      
+
       return this.localStreamUrl;
     } catch (error) {
       this.logger.error(`Failed to start direct stream player: ${error.message}`);
@@ -206,7 +204,7 @@ class DirectStreamPlayer {
    */
   async stop() {
     this.logger.info('Stopping direct stream player');
-    
+
     try {
       await this.mpdPlugin.stop();
       await this.mpdPlugin.sendMpdCommand('clear', []);
@@ -217,19 +215,19 @@ class DirectStreamPlayer {
         this.proxyServer = null;
         this.proxyPort = null;
       }
-      
+
       // Close EventSource connection
       if (this.eventSource) {
         this.eventSource.close();
         this.eventSource = null;
       }
-      
+
       // Clear metadata timer
       if (this.metadataUpdateTimer) {
         clearTimeout(this.metadataUpdateTimer);
         this.metadataUpdateTimer = null;
       }
-      
+
       // Reset state
       this.streamURL = null;
       this.stationCode = null;
@@ -237,7 +235,7 @@ class DirectStreamPlayer {
       this.isPlaying = false;
       this.localStreamUrl = null;
       this.isFirstTimeMetadata = true;
-      
+
       this.logger.info('Direct stream player stopped');
     } catch (error) {
       this.logger.error(`Error during direct stream player cleanup: ${error.message}`);
@@ -311,7 +309,7 @@ class DirectStreamPlayer {
    */
   async handleStream(streamUrl, res) {
     const self = this;
-    
+
     try {
       const authenticatedStreamUrl = self.addAuthParamsCallback(streamUrl);
       self.logger.info(`Starting direct stream handling for URL: ${authenticatedStreamUrl.toString()}`);
@@ -359,13 +357,13 @@ class DirectStreamPlayer {
       });
 
       // Handle stream error
-      response.data.on('error', (error) => {
+      response.data.on('error', error => {
         self.logger.error(`Direct stream error: ${error.message}`);
         self.handleStreamError(error, 'direct stream', res);
       });
-
     } catch (error) {
-      self.logger.error(`Failed to handle direct stream: ${error.message}`);
+      const errorMessage = self._formatAxiosError(error, 'handle direct stream');
+      self.logger.error(errorMessage);
       self.handleStreamError(error, 'direct stream', res);
     }
   }
@@ -397,6 +395,30 @@ class DirectStreamPlayer {
     if (res && !res.headersSent) {
       res.writeHead(HTTP_INTERNAL_SERVER_ERROR);
       res.end();
+    }
+  }
+
+  /**
+   * Format axios error for better logging
+   * @private
+   * @param {Error} error - The error object from axios
+   * @param {string} context - Context for the error message
+   * @returns {string} - Formatted error message
+   */
+  _formatAxiosError(error, context) {
+    if (error.response) {
+      // The request was made and the server responded with a status code
+      // that falls out of the range of 2xx
+      const status = error.response.status;
+      const statusText = error.response.statusText || '';
+      const data = error.response.data ? JSON.stringify(error.response.data) : 'No response data';
+      return `Failed to ${context}: request failed with status code ${status}${statusText ? ` (${statusText})` : ''}. Response: ${data}`;
+    } else if (error.request) {
+      // The request was made but no response was received
+      return `Failed to ${context}: no response received from server. ${error.message}`;
+    } else {
+      // Something happened in setting up the request that triggered an Error
+      return `Failed to ${context}: ${error.message}`;
     }
   }
 }

@@ -8,7 +8,6 @@ const StationManager = require('./src/StationManager');
 const StreamPlayerFactory = require('./src/StreamPlayerFactory');
 const MetadataFetcher = require('./src/MetadataFetcher');
 
-
 // Constants
 const DEFAULT_STATION_CODE = 'pln';
 const DEFAULT_ALBUM_ART = '/albumart?sourceicon=music_service/planet_radio/assets/planet_radio.webp';
@@ -30,16 +29,15 @@ const ControllerPlanetRadio = function (context) {
     info: (msg, ...args) => this.context.logger.info(`[PlanetRadio] ${msg}`, ...args),
     warn: (msg, ...args) => this.context.logger.warn(`[PlanetRadio] ${msg}`, ...args),
     error: (msg, ...args) => this.context.logger.error(`[PlanetRadio] ${msg}`, ...args),
-    debug: (msg, ...args) => this.context.logger.debug(`[PlanetRadio] ${msg}`, ...args)
+    debug: (msg, ...args) => this.context.logger.debug(`[PlanetRadio] ${msg}`, ...args),
   };
-  
+
   self.authManager = new AuthManager(self.logger);
   self.stationManager = new StationManager(self.logger);
   self.state = {};
 
   self.streamPlayer = null;
   self.currentStationInfo = null; // Will store station info including code, name, albumart
-
 };
 
 ControllerPlanetRadio.prototype.onVolumioStart = function () {
@@ -69,7 +67,6 @@ ControllerPlanetRadio.prototype.onStop = function () {
   self.commandRouter.volumioStop();
   return libQ.resolve();
 };
-
 
 ControllerPlanetRadio.prototype.onRestart = function () {
   return libQ.resolve();
@@ -112,7 +109,6 @@ ControllerPlanetRadio.prototype.getUIConfig = function () {
   self.commandRouter
     .i18nJson(`${__dirname}/i18n/strings_${lang_code}.json`, `${__dirname}/i18n/strings_en.json`, `${__dirname}/UIConfig.json`)
     .then(function (uiconf) {
-
       // Ensure config values exist, use defaults if not
       const username = self.config.get('username') || '';
       const password = self.config.get('password') || '';
@@ -183,7 +179,8 @@ ControllerPlanetRadio.prototype.handleBrowseUri = function (curUri) {
 
     const defer = libQ.defer();
 
-    self.stationManager.getStationInfo(stationCode)
+    self.stationManager
+      .getStationInfo(stationCode)
       .then(stationInfo => {
         // Return a single playable item
         const item = {
@@ -282,7 +279,8 @@ ControllerPlanetRadio.prototype.getRootContent = function () {
 
   self.logger.info('Getting root content - fetching stations...');
 
-  self.stationManager.getStations()
+  self.stationManager
+    .getStations()
     .then(stations => {
       self.logger.info(`Stations received in getRootContent: ${stations.length} stations`);
       const result = {
@@ -326,7 +324,8 @@ ControllerPlanetRadio.prototype.explodeUri = function (uri) {
 
     self.logger.info(`Extracted station code: ${stationCode}`);
 
-    self.stationManager.getStationInfo(stationCode)
+    self.stationManager
+      .getStationInfo(stationCode)
       .then(stationInfo => {
         self.logger.info(`Station info received in explodeUri: ${JSON.stringify(stationInfo)}`);
         const track = {
@@ -384,7 +383,8 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
   }
 
   // First authenticate, then get streaming URL with parameters and start proxy
-  self._authenticate()
+  self
+    ._authenticate()
     .then(userId => {
       self.logger.info(`Authentication successful, proceeding to get station info... User ID: ${userId}`);
       // Extract station code from track.uri if possible (e.g., planetradio/[stationCode])
@@ -418,13 +418,7 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
       });
 
       // Create the appropriate stream player using the factory method
-      self.streamPlayer = StreamPlayerFactory.createPlayer(
-        streamUrl, 
-        self.mpdPlugin, 
-        self.logger, 
-        self._addAuthParamsToStreamURL.bind(self),
-        metadataFetcher
-      );
+      self.streamPlayer = StreamPlayerFactory.createPlayer(streamUrl, self.mpdPlugin, self.logger, self._addAuthParamsToStreamURL.bind(self), metadataFetcher);
 
       return self.streamPlayer.start();
     })
@@ -454,8 +448,6 @@ ControllerPlanetRadio.prototype.clearAddPlayTrack = function (track) {
   return defer.promise;
 };
 
-
-
 ControllerPlanetRadio.prototype.pushSongState = function (metadata) {
   const self = this;
   const defer = libQ.defer();
@@ -482,7 +474,8 @@ ControllerPlanetRadio.prototype.pushSongState = function (metadata) {
   };
 
   // Get MPD status to get actual audio format
-  self.mpdPlugin.sendMpdCommand('status', [])
+  self.mpdPlugin
+    .sendMpdCommand('status', [])
     .then(status => {
       if (status) {
         self.logger.info('Parsing MPD status for audio info.');
@@ -631,7 +624,7 @@ ControllerPlanetRadio.prototype._updateVolumioState = function (stateObject) {
 
 ControllerPlanetRadio.prototype._resetUIState = function () {
   const self = this;
-  
+
   // Use stored station info for UI display
   if (self.currentStationInfo) {
     // Reset UI state using the centralized update function with stored station info
